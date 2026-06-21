@@ -1,0 +1,64 @@
+flowchart TD
+    A([User Uploads Document\nPDF / Image / DOCX / TXT]) --> B{File Validation\nType and Size check}
+
+    B -->|Invalid type or >20MB| ERR([HTTP 400 Error\nRejected])
+    B -->|Valid| C[Save to uploads/]
+
+    C --> D{File Type?}
+
+    D -->|PDF| E[PyMuPDF\nRender each page\nat 300 DPI to PNG]
+    D -->|PNG / JPG| F[PIL / Pillow\nLoad image as RGB]
+    D -->|DOCX / DOC| G[python-docx\nExtract paragraphs\ndirectly - no OCR]
+    D -->|TXT| H[UTF-8 decode\nNo processing needed]
+
+    E --> PREP[Image Preprocessing\nOpenCV Pipeline]
+    F --> PREP
+
+    PREP --> P1[Grayscale\nconversion]
+    P1 --> P2[Upscale if small\nINTER_CUBIC]
+    P2 --> P3[fastNlMeans\nDenoising h=8]
+    P3 --> P4[CLAHE\nclipLimit=2.0]
+    P4 --> P5[Unsharp Mask\naddWeighted 1.5 / -0.5]
+
+    P5 --> OCR[EasyOCR\nCNN-based text detection\ngpu=False conf > 0.3]
+    G --> POST
+    H --> SAVE
+
+    OCR --> RAW[Raw text lines\nbounding-box + confidence]
+    RAW --> POST[Post-Processing\nRegex corrections]
+
+    POST --> FIX1[Fix currency symbol]
+    POST --> FIX2[Fix O and l to 0 and 1 between digits]
+    POST --> FIX3[Fix Rs and INR to currency symbol]
+    POST --> FIX4[Fix email space dot]
+
+    FIX1 & FIX2 & FIX3 & FIX4 --> CLEAN[Clean OCR text]
+
+    CLEAN --> SAVE[Save to ocr_results]
+    SAVE --> RESP[Return extracted_text\nto browser via JSON]
+
+    RESP --> CHECK{Fields defined\nby user?}
+    CHECK -->|No fields| RAWTAB[Show Raw Text tab]
+    CHECK -->|Fields defined| EXT[POST /extract\nKeyword Proximity Search]
+
+    EXT --> SCAN[Scan each OCR line\nagainst each field name]
+
+    SCAN --> TIER1[Exact phrase match\nconf_base = 0.93]
+    SCAN --> TIER2[All field words match\nconf_base = 0.80]
+    SCAN --> TIER3[60 percent words match\nconf_base = 0.60 to 0.68]
+
+    TIER1 & TIER2 & TIER3 --> VAL[Extract value\nfrom same line after colon\nor next non-empty line]
+
+    VAL --> CONF[Confidence adjustment\nSame line x1.0\nNext line x0.87]
+
+    CONF --> OUT[Results JSON\nextractions overall_accuracy\nfields_found fields_total]
+
+    OUT --> UI[UI Extracted Fields tab\nValue + confidence bars\nGreen above 70 Amber 40 to 70 Red below 40]
+
+    style A fill:#F0A500,color:#0D1117,stroke:none
+    style ERR fill:#F85149,color:#ffffff,stroke:none
+    style OCR fill:#F0A500,color:#0D1117,stroke:none
+    style UI fill:#3FB950,color:#0D1117,stroke:none
+    style PREP fill:#1C2333,color:#E6EDF3,stroke:#21262D
+    style POST fill:#1C2333,color:#E6EDF3,stroke:#21262D
+    style EXT fill:#1C2333,color:#E6EDF3,stroke:#21262D
