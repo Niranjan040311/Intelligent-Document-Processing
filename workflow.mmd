@@ -5,6 +5,7 @@ flowchart TD
     B -->|Valid| C[Save to uploads/]
 
     C --> D{File Type?}
+    
 
     D -->|PDF| E[PyMuPDF\nRender each page\nat 300 DPI to PNG]
     D -->|PNG / JPG| F[PIL / Pillow\nLoad image as RGB]

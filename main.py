@@ -87,8 +87,8 @@ def preprocess_for_ocr(img_array: np.ndarray) -> np.ndarray:
 def postprocess_ocr_text(text: str) -> str:
     """Fix common OCR misreads: ₹ symbol, O/0 confusion, email dots, etc."""
 
-    # ₹ misread as '<' or '< ' before a digit
-    text = re.sub(r'<\s*(?=\d)', '₹', text)
+    # ₹ misread as '<' or '& ' before a digit
+    text = re.sub(r'[<&]\s*(?=\d)', '₹', text)
 
     # ₹ misread as '8' at the very start of a price (e.g. 811,428 → ₹11,428)
     # Pattern: 8 followed immediately by digits + comma + digits (price shape)
