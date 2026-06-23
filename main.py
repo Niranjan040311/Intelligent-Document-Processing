@@ -11,6 +11,7 @@ import easyocr
 import fitz  # PyMuPDF
 import numpy as np
 from docx import Document
+import openpyxl
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -23,7 +24,7 @@ OCR_DIR = Path("ocr_results")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OCR_DIR.mkdir(exist_ok=True)
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".txt"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".txt", ".xlsx", ".xls"}
 MAX_FILE_SIZE_MB = 20
 
 ocr_reader: easyocr.Reader = None
@@ -139,8 +140,30 @@ def _extract_text_sync(file_bytes: bytes, filename: str) -> str:
 
     if ext in {".docx", ".doc"}:
         doc = Document(io.BytesIO(file_bytes))
-        raw = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-        return postprocess_ocr_text(raw)
+        parts = []
+
+        for p in doc.paragraphs:
+            if p.text.strip():
+                parts.append(p.text.strip())
+
+        for table in doc.tables:
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if cells:
+                    parts.append(" | ".join(cells))
+
+        return postprocess_ocr_text("\n".join(parts))
+
+    if ext in {".xlsx", ".xls"}:
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+        parts = []
+        for sheet in wb.worksheets:
+            parts.append(f"--- Sheet: {sheet.title} ---")
+            for row in sheet.iter_rows(values_only=True):
+                cells = [str(cell).strip() for cell in row if cell is not None and str(cell).strip()]
+                if cells:
+                    parts.append(" | ".join(cells))
+        return postprocess_ocr_text("\n".join(parts))
 
     if ext == ".txt":
         return file_bytes.decode("utf-8", errors="ignore")
@@ -248,21 +271,44 @@ def _is_numeric_field(field_lower: str) -> bool:
     return any(kw in field_lower for kw in _NUMERIC_KEYWORDS)
 
 
+def _whole_word(haystack_lower: str, needle_lower: str) -> bool:
+    """Match `needle` only as a complete word/phrase, not inside another word.
+
+    Prevents a short field like "id" from matching inside "paid"/"void", and
+    keeps "Order ID" from being mistaken for the field "ID".
+    """
+    if not needle_lower:
+        return False
+    return re.search(rf'(?<!\w){re.escape(needle_lower)}(?!\w)', haystack_lower) is not None
+
+
 def extract_single_field(lines: list[str], field: str) -> dict:
-    field_lower = field.lower()
-    field_words = [w for w in field_lower.split() if len(w) > 2]
+    field_lower = field.lower().strip()
+    # Significant words only (drop tiny connector words), but keep the field
+    # usable even when it's a single short token like "id" or "po".
+    field_words = [w for w in re.findall(r'\w+', field_lower) if len(w) > 2]
 
     candidates: list[tuple[float, int, str]] = []  # (confidence, line_index, value)
 
     for i, line in enumerate(lines):
         line_lower = line.lower()
 
-        if field_lower in line_lower:
-            conf_base = 0.93
-        elif field_words and all(w in line_lower for w in field_words):
+        # The label portion is what sits before a ':'/'=' — the field name should
+        # really live there, not buried in the value.
+        split = re.split(r'[:=]\s*', line, maxsplit=1)
+        label_lower = split[0].lower() if len(split) > 1 else line_lower
+
+        if _whole_word(line_lower, field_lower):
+            # Full phrase present as whole words. Strongest when it's the label.
+            conf_base = 0.95 if _whole_word(label_lower, field_lower) else 0.90
+            # Exact label ("ID: 4471" for field "ID") beats a prefixed label
+            # ("Customer ID: ...") so we stop grabbing the first loose match.
+            if label_lower.strip() == field_lower:
+                conf_base = 0.98
+        elif field_words and all(_whole_word(line_lower, w) for w in field_words):
             conf_base = 0.80
         elif field_words and len(field_words) > 1:
-            hit_ratio = sum(1 for w in field_words if w in line_lower) / len(field_words)
+            hit_ratio = sum(1 for w in field_words if _whole_word(line_lower, w)) / len(field_words)
             if hit_ratio >= 0.6:
                 conf_base = hit_ratio * 0.68
             else:
@@ -270,7 +316,7 @@ def extract_single_field(lines: list[str], field: str) -> dict:
         else:
             continue
 
-        same_line_split = re.split(r'[:=]\s*', line, maxsplit=1)
+        same_line_split = split
         if len(same_line_split) > 1 and same_line_split[1].strip():
             candidate = same_line_split[1].strip()
             conf = conf_base

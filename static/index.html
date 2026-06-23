@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DocScan IDP</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23080D18'/%3E%3Cpath d='M11 7h7l4 4v14a1 1 0 0 1-1 1H11a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z' fill='none' stroke='%23F0A500' stroke-width='1.8' stroke-linejoin='round'/%3E%3Cpath d='M18 7v4h4' fill='none' stroke='%23F0A500' stroke-width='1.8' stroke-linejoin='round'/%3E%3Cline x1='13' y1='15' x2='19' y2='15' stroke='%23F0A500' stroke-width='1.6' stroke-linecap='round'/%3E%3Cline x1='13' y1='19' x2='19' y2='19' stroke='%23F0A500' stroke-width='1.6' stroke-linecap='round'/%3E%3Cline x1='8' y1='16' x2='24' y2='16' stroke='%2322C55E' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
   <style>
   /* ─── TOKENS ─────────────────────────────────────────────────────── */
   :root {
@@ -557,6 +558,113 @@
   }
 
   .no-file-hint { font-size: 11px; color: var(--t3); }
+
+  /* ─── BATCH QUEUE ────────────────────────────────────────────────── */
+  .batch-queue { display: none; flex-direction: column; gap: 7px; margin-bottom: 12px; }
+  /* A self-contained, bordered panel with its OWN scrollbar — independent of
+     the sidebar scroll. Shows ~3 documents, then scrolls; the processing card
+     below stays fixed and always visible. */
+  .batch-queue.show {
+    display: flex;
+    max-height: 210px;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    padding: 8px;
+    border: 1px solid var(--b1);
+    border-radius: var(--r);
+    background: var(--b0);
+  }
+  .batch-queue::-webkit-scrollbar { width: 10px; }
+  .batch-queue::-webkit-scrollbar-track { background: var(--s2); border-radius: 5px; margin: 4px 0; }
+  .batch-queue::-webkit-scrollbar-thumb { background: var(--a20); border-radius: 5px; border: 2px solid var(--b0); }
+  .batch-queue::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+  .queue-item {
+    background: var(--s2);
+    border: 1px solid var(--b0);
+    border-radius: var(--r);
+    padding: 9px 10px;
+    transition: border-color .2s, background .2s;
+  }
+  .queue-item.done { cursor: pointer; }
+  .queue-item.done:hover { border-color: var(--a20); }
+  .queue-item.active { border-color: var(--accent); background: var(--a10); }
+
+  .q-row { display: flex; align-items: center; gap: 7px; }
+
+  .q-badge {
+    font-size: 8px; font-weight: 700; letter-spacing: .5px;
+    color: var(--accent); background: var(--a10);
+    border: 1px solid var(--a20); border-radius: 4px;
+    padding: 2px 5px; flex-shrink: 0;
+  }
+
+  .q-title {
+    flex: 1; min-width: 0;
+    font-size: 11px; font-weight: 600; color: var(--t1);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .q-steps { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+  .q-dot { flex: 1; height: 3px; border-radius: 2px; background: var(--b1); transition: background .3s; }
+  .q-dot.done { background: var(--green); }
+  .q-dot.active { background: var(--accent); animation: pulse 1.2s ease infinite; }
+  .q-dot.err { background: var(--red); }
+
+  .q-remove {
+    flex-shrink: 0;
+    width: 18px; height: 18px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: none; border-radius: 5px;
+    background: transparent; color: var(--t3);
+    font-size: 15px; line-height: 1; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .q-remove:hover { background: var(--r10); color: var(--red); }
+  .q-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* ─── DOC STATUS VIEW ────────────────────────────────────────────── */
+  .doc-status { display: none; flex: 1; flex-direction: column; align-items: center;
+    justify-content: center; gap: 18px; padding: 40px 32px; text-align: center; }
+  .doc-status.show { display: flex; }
+  /* When the status view is up, the tab panels are hidden. */
+  .doc-status.show ~ .tab-panel { display: none !important; }
+
+  .ds-badge {
+    width: 64px; height: 64px; border-radius: 16px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--a10); border: 1px solid var(--a20);
+  }
+  .ds-badge.done { background: var(--g10); border-color: var(--g20); }
+  .ds-badge.err  { background: var(--r10); border-color: rgba(239,68,68,0.25); }
+  .ds-badge svg { width: 30px; height: 30px; }
+
+  .ds-name { font-size: 15px; font-weight: 700; color: var(--t1); word-break: break-all; max-width: 460px; }
+  .ds-state { font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .ds-state.proc { color: var(--accent); }
+  .ds-state.queued { color: var(--t3); }
+  .ds-state.err { color: var(--red); }
+  .ds-msg { font-size: 13px; color: var(--t2); max-width: 420px; line-height: 1.6; }
+
+  .ds-progress { width: 100%; max-width: 420px; }
+  .ds-track { height: 6px; background: var(--b1); border-radius: 3px; overflow: hidden; }
+  .ds-fill { height: 100%; background: linear-gradient(90deg, #D48A00, #F0A500);
+    border-radius: 3px; transition: width .4s ease; box-shadow: 0 0 8px rgba(240,165,0,.4); }
+  .ds-pct { margin-top: 7px; font-size: 11px; color: var(--t3);
+    font-family: 'Consolas','Cascadia Code',monospace; }
+
+  /* Stage checklist */
+  .ds-stages { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 320px; text-align: left; }
+  .ds-stage { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--t3); }
+  .ds-stage .ds-tick {
+    width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+    border: 1.5px solid var(--b1); display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+  }
+  .ds-stage.done { color: var(--t2); }
+  .ds-stage.done .ds-tick { background: var(--green); border-color: var(--green); color: #07120a; }
+  .ds-stage.active { color: var(--accent); font-weight: 600; }
+  .ds-stage.active .ds-tick { border-color: var(--accent); animation: pulse 1.2s ease infinite; }
 
   /* ─── PIPELINE ───────────────────────────────────────────────────── */
   .pipeline {
@@ -1251,12 +1359,12 @@
             <polyline points="9,16 12,13 15,16"/>
           </svg>
         </div>
-        <div class="drop-title">Drop your document here</div>
-        <div class="drop-hint">PDF, DOCX, PNG, JPG, TXT &middot; up to 20 MB</div>
-        <button class="primary-btn" onclick="event.stopPropagation(); fileInput.click()">Browse file</button>
+        <div class="drop-title">Drop your documents here</div>
+        <div class="drop-hint">PDF, DOCX, PNG, JPG, TXT &middot; up to 20 MB &middot; multiple documents supported</div>
+        <button class="primary-btn" onclick="event.stopPropagation(); fileInput.click()">Browse files</button>
       </div>
 
-      <input type="file" id="fileInput" accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.txt" onchange="onFileSelect(event)">
+      <input type="file" id="fileInput" multiple accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.txt" onchange="onFileSelect(event)">
     </div>
 
     <!-- Fields -->
@@ -1290,6 +1398,9 @@
         </svg>
         File Status
       </div>
+
+      <!-- Batch queue (shown when more than one document is selected) -->
+      <div class="batch-queue" id="batchQueue"></div>
 
       <div class="file-card" id="fileCard">
         <div class="file-header">
@@ -1404,6 +1515,9 @@
       </div>
     </div>
 
+    <!-- Live document status (shown when a not-yet-finished document is clicked) -->
+    <div class="doc-status" id="docStatus"></div>
+
     <!-- Extracted Fields Panel -->
     <div class="tab-panel active" id="panelExtracted">
 
@@ -1488,6 +1602,11 @@
   let currentTab = 'extracted';
   const userFields = [];
 
+  // Batch state — every selected document, processed one by one.
+  let docs = [];        // [{ file, name, size, status, stage, pct, ocrText, words, chars, pages, error }]
+  let activeDoc = null; // the document OBJECT currently shown in the right panel (removal-safe)
+  let statusDoc = null; // document whose live status is shown in the right panel (null = none)
+
   /* ── Utils ────────────────────────────────────────────────────────── */
   function fmt(b) {
     if (b < 1024) return b + ' B';
@@ -1511,6 +1630,7 @@
 
   /* ── Tabs ─────────────────────────────────────────────────────────── */
   function switchTab(tab) {
+    hideStatus();  // leave the status view when a tab is chosen
     currentTab = tab;
     document.getElementById('panelExtracted').classList.toggle('active', tab === 'extracted');
     document.getElementById('panelRaw').classList.toggle('active', tab === 'raw');
@@ -1582,11 +1702,11 @@
   function onDrop(e) {
     e.preventDefault();
     document.getElementById('dropZone').classList.remove('drag-over');
-    if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+    handleFiles(e.dataTransfer.files);
   }
 
   function onFileSelect(e) {
-    if (e.target.files[0]) upload(e.target.files[0]);
+    handleFiles(e.target.files);
     e.target.value = '';
   }
 
@@ -1626,19 +1746,203 @@
     }
   }
 
-  async function upload(file) {
-    currentFile = file.name;
+  /* ── Batch queue rendering ────────────────────────────────────────── */
+  function stageWord(stage) {
+    return stage <= 1 ? 'Uploading' : stage === 2 ? 'Preprocess' : stage === 3 ? 'OCR' : 'Finishing';
+  }
+
+  function renderQueue() {
+    const q = document.getElementById('batchQueue');
+    // Single document keeps the clean original look — no queue.
+    if (docs.length <= 1) { q.classList.remove('show'); q.innerHTML = ''; return; }
+    q.classList.add('show');
+    q.innerHTML = docs.map((d, i) => queueItemHTML(d, i)).join('');
+
+    // Keep the document being processed (or viewed) in sight within the scroll area.
+    const activeEl = q.querySelector('.queue-item.active');
+    if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+  }
+
+  function queueItemHTML(d, i) {
+    const ext = (d.name.split('.').pop() || '').toUpperCase();
+    const safeName = d.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const chip =
+      d.status === 'done'       ? ['chip-done', 'Done'] :
+      d.status === 'error'      ? ['chip-error', 'Failed'] :
+      d.status === 'processing' ? ['chip-processing', stageWord(d.stage)] :
+                                  ['chip-processing', 'Queued'];
+
+    const steps = [1, 2, 3, 4].map(s => {
+      let cls = '';
+      if (d.status === 'done') cls = 'done';
+      else if (d.status === 'error') cls = s === d.stage ? 'err' : (s < d.stage ? 'done' : '');
+      else if (d.status === 'processing') cls = s < d.stage ? 'done' : (s === d.stage ? 'active' : '');
+      return `<span class="q-dot ${cls}"></span>`;
+    }).join('');
+
+    const activeCls = d === activeDoc ? ' active' : '';
+    const liveDot = d.status === 'processing' ? '<div class="chip-dot"></div>' : '';
+    // Can't pull a document out from under itself while it's mid-pipeline.
+    const removeBtn = d.status === 'processing' ? '' :
+      `<button class="q-remove" title="Remove document" aria-label="Remove ${safeName}" onclick="removeDoc(${i}, event)">×</button>`;
+
+    return `
+      <div class="queue-item ${d.status}${activeCls}" data-i="${i}" onclick="onQueueClick(${i})">
+        <div class="q-row">
+          <span class="q-badge">${ext}</span>
+          <span class="q-title" title="${safeName}">${safeName}</span>
+          <span class="status-chip ${chip[0]}">${liveDot}<span>${chip[1]}</span></span>
+          ${removeBtn}
+        </div>
+        <div class="q-steps">${steps}</div>
+      </div>`;
+  }
+
+  function onQueueClick(i) {
+    const d = docs[i];
+    if (!d) return;
+    if (d.status === 'done') viewDoc(d);      // finished → show OCR + extraction
+    else showStatus(d);                        // queued / processing / failed → show status
+  }
+
+  /* ── Live status view for a not-yet-finished document ─────────────── */
+  function hideStatus() {
+    statusDoc = null;
+    document.getElementById('docStatus').classList.remove('show');
+  }
+
+  const _DS_STAGES = ['Uploaded', 'Preprocess', 'OCR', 'Result'];
+
+  function showStatus(d) {
+    statusDoc = d;
+    const el = document.getElementById('docStatus');
+    const safeName = d.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Badge + headline state per status.
+    let badgeCls, stateCls, stateText, msg, icon;
+    if (d.status === 'error') {
+      badgeCls = 'err'; stateCls = 'err'; stateText = 'Failed';
+      msg = d.error ? `Reason: ${d.error.replace(/</g, '&lt;')}` : 'This document could not be processed.';
+      icon = `<svg viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg>`;
+    } else if (d.status === 'queued') {
+      badgeCls = ''; stateCls = 'queued'; stateText = 'Queued';
+      msg = 'Waiting in line — processing starts as soon as the documents ahead of it finish.';
+      icon = `<svg viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`;
+    } else { // processing
+      badgeCls = ''; stateCls = 'proc'; stateText = stageWord(d.stage) + '…';
+      msg = `This document is being processed right now — ${_DS_STAGES[Math.max(0, d.stage - 1)]} stage.`;
+      icon = `<svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="9" ry="5"/><circle cx="12" cy="12" r="2.5"/></svg>`;
+    }
+
+    // Stage checklist.
+    const stages = _DS_STAGES.map((name, idx) => {
+      const step = idx + 1;
+      let cls = '', tick = '';
+      if (d.status === 'done' || step < d.stage) { cls = 'done'; tick = '✓'; }
+      else if (d.status === 'error' && step === d.stage) { cls = ''; tick = '✕'; }
+      else if (d.status === 'processing' && step === d.stage) { cls = 'active'; tick = ''; }
+      return `<div class="ds-stage ${cls}"><span class="ds-tick">${tick}</span>${name}</div>`;
+    }).join('');
+
+    const showProgress = d.status === 'processing';
+    el.innerHTML = `
+      <div class="ds-badge ${badgeCls}">${icon}</div>
+      <div>
+        <div class="ds-state ${stateCls}">${stateText}</div>
+        <div class="ds-name" style="margin-top:6px">${safeName}</div>
+      </div>
+      ${showProgress ? `
+        <div class="ds-progress">
+          <div class="ds-track"><div class="ds-fill" style="width:${d.pct}%"></div></div>
+          <div class="ds-pct">${d.pct}%</div>
+        </div>` : ''}
+      <div class="ds-stages">${stages}</div>
+      <div class="ds-msg">${msg}</div>`;
+
+    el.classList.add('show');
+    // Highlight the clicked document in the queue (left pipeline card keeps
+    // tracking whatever is actively processing).
+    activeDoc = d;
+    renderQueue();
+  }
+
+  // Remove a document and drop its data. Re-points the view if the active one goes.
+  function removeDoc(i, ev) {
+    if (ev) ev.stopPropagation();
+    const d = docs[i];
+    if (!d) return;
+    if (d.status === 'processing') { toast('Cannot remove while it is processing', 'err'); return; }
+
+    const wasActive = d === activeDoc;
+    docs.splice(i, 1);
+    toast(`Removed ${d.name}`);
+
+    if (!docs.length) { resetWorkspace(); return; }
+
+    if (wasActive) {
+      const nextDone = docs.find(x => x.status === 'done');
+      if (nextDone) viewDoc(nextDone);
+      else clearActivePanel();
+    }
+    renderQueue();
+  }
+
+  /* ── Batch driver: process every selected document one by one ──────── */
+  async function handleFiles(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length) return;
+
+    docs = files.map(f => ({
+      file: f, name: f.name, size: f.size,
+      status: 'queued', stage: 0, pct: 0,
+      ocrText: '', words: 0, chars: 0, pages: 0, error: '',
+    }));
+    activeDoc = null;
+    renderQueue();
+
+    if (files.length > 1) toast(`Processing ${files.length} documents one by one…`);
+
+    // Sequential — pull the next queued doc by status so removals mid-batch are safe.
+    let next;
+    while ((next = docs.find(d => d.status === 'queued'))) {
+      await processDoc(next);
+    }
+
+    // If the active document failed (or was removed), land on the first successful one.
+    if (!activeDoc || activeDoc.status !== 'done') {
+      const firstDone = docs.find(d => d.status === 'done');
+      if (firstDone) viewDoc(firstDone);
+    }
+    renderQueue();
+  }
+
+  // Drive the main file card + queue item through one shared stage transition.
+  function setDocStage(d, stage, pct, label, chipText, chipState) {
+    d.stage = stage;
+    d.pct = pct;
+    setStage(stage);
+    setProgress(pct, label);
+    setChip(chipState || 'processing', chipText);
+    renderQueue();
+    // Live-update the status view if the user is watching this document.
+    if (statusDoc === d) showStatus(d);
+  }
+
+  async function processDoc(d) {
+    activeDoc = d;
+    currentFile = d.name;
     ocrText = '';
 
+    // Reset the main file card / right panel for this document.
     document.getElementById('noFileHint').style.display = 'none';
     document.getElementById('fileCard').classList.add('show');
-    document.getElementById('fName').textContent = file.name;
-    document.getElementById('fSize').textContent = fmt(file.size);
+    document.getElementById('fName').textContent = d.name;
+    document.getElementById('fSize').textContent = fmt(d.size);
     document.getElementById('statsGrid').classList.remove('show');
     document.getElementById('extractBtn').disabled = true;
     document.getElementById('copyBtn').disabled = true;
     document.getElementById('dlBtn').disabled = true;
-
     document.getElementById('extractionResults').style.display = 'none';
     document.getElementById('emptyExtracted').style.display = 'flex';
     document.getElementById('ocrOutput').style.display = 'none';
@@ -1646,25 +1950,21 @@
 
     const dz = document.getElementById('dropZone');
     dz.classList.add('scanning');
-    setProgress(10, 'Uploading…');
-    setChip('processing', 'Uploading');
-    setStage(1);
+
+    d.status = 'processing';
+    setDocStage(d, 1, 10, 'Uploading…', 'Uploading');
 
     const form = new FormData();
-    form.append('file', file);
+    form.append('file', d.file);
 
     try {
-      // Simulate preprocessing stage while request is in-flight
+      // Simulate preprocessing stage while the request is in-flight.
       const fetchPromise = fetch(`${API}/upload`, { method: 'POST', body: form });
       await new Promise(r => setTimeout(r, 600));
-      setStage(2);
-      setProgress(30, 'Preprocessing…');
-      setChip('processing', 'Preprocessing');
+      setDocStage(d, 2, 30, 'Preprocessing…', 'Preprocessing');
 
       await new Promise(r => setTimeout(r, 900));
-      setStage(3);
-      setProgress(55, 'Running OCR…');
-      setChip('processing', 'OCR Running');
+      setDocStage(d, 3, 55, 'Running OCR…', 'OCR Running');
 
       const res = await fetchPromise;
       setProgress(85, 'Finishing up…');
@@ -1675,42 +1975,97 @@
       }
 
       const data = await res.json();
-      ocrText = data.extracted_text || '';
+      d.ocrText = data.extracted_text || '';
+      d.words = d.ocrText.trim() ? d.ocrText.trim().split(/\s+/).length : 0;
+      d.chars = d.ocrText.length;
+      d.pages = (d.ocrText.match(/--- Page \d+ ---/g) || []).length || 1;
+      d.status = 'done';
 
-      setStage(4);
-      setProgress(100, 'OCR complete');
+      setDocStage(d, 4, 100, 'OCR complete', 'OCR Done', 'done');
       dz.classList.remove('scanning');
-      setChip('done', 'OCR Done');
 
-      const words = ocrText.trim() ? ocrText.trim().split(/\s+/).length : 0;
-      document.getElementById('sWords').textContent = words.toLocaleString();
-      document.getElementById('sChars').textContent = ocrText.length.toLocaleString();
-      const pages = (ocrText.match(/--- Page \d+ ---/g) || []).length || 1;
-      document.getElementById('sPages').textContent = pages;
-      document.getElementById('statsGrid').classList.add('show');
-
-      renderRawText(ocrText);
-
-      document.getElementById('extractBtn').disabled = false;
-      document.getElementById('copyBtn').disabled = false;
-      document.getElementById('dlBtn').disabled = false;
-
-      toast('OCR complete', 'ok');
-
-      if (userFields.length > 0) {
-        switchTab('extracted');
-        await runExtraction();
-      } else {
-        switchTab('raw');
-      }
+      await showDocResult(d);
+      toast(`${d.name} — OCR complete`, 'ok');
 
     } catch (err) {
+      d.status = 'error';
+      d.error = err.message;
+      d.stage = d.stage || 1;
       dz.classList.remove('scanning');
       setStage(0);
       setProgress(0, 'Failed');
       setChip('err', 'Error');
-      toast(err.message, 'err');
+      renderQueue();
+      toast(`${d.name} — ${err.message}`, 'err');
     }
+  }
+
+  // Load a processed document's OCR text, stats and extraction into the panel.
+  async function showDocResult(d) {
+    hideStatus();
+    activeDoc = d;
+    ocrText = d.ocrText;
+    currentFile = d.name;
+
+    document.getElementById('sWords').textContent = d.words.toLocaleString();
+    document.getElementById('sChars').textContent = d.chars.toLocaleString();
+    document.getElementById('sPages').textContent = d.pages;
+    document.getElementById('statsGrid').classList.add('show');
+
+    renderRawText(ocrText);
+
+    document.getElementById('extractBtn').disabled = false;
+    document.getElementById('copyBtn').disabled = false;
+    document.getElementById('dlBtn').disabled = false;
+
+    renderQueue();
+
+    if (userFields.length > 0) {
+      switchTab('extracted');
+      await runExtraction();
+    } else {
+      switchTab('raw');
+    }
+  }
+
+  // Click a completed queue item to revisit its result.
+  function viewDoc(d) {
+    if (!d || d.status !== 'done') return;
+    document.getElementById('fileCard').classList.add('show');
+    document.getElementById('noFileHint').style.display = 'none';
+    document.getElementById('fName').textContent = d.name;
+    document.getElementById('fSize').textContent = fmt(d.size);
+    setStage(4);
+    setProgress(100, 'OCR complete');
+    setChip('done', 'OCR Done');
+    showDocResult(d);
+  }
+
+  // Empty the right-hand panel without clearing the queue (active doc removed,
+  // but other queued/failed docs remain).
+  function clearActivePanel() {
+    activeDoc = null;
+    ocrText = '';
+    currentFile = '';
+    document.getElementById('statsGrid').classList.remove('show');
+    document.getElementById('extractBtn').disabled = true;
+    document.getElementById('copyBtn').disabled = true;
+    document.getElementById('dlBtn').disabled = true;
+    document.getElementById('extractionResults').style.display = 'none';
+    document.getElementById('emptyExtracted').style.display = 'flex';
+    document.getElementById('ocrOutput').style.display = 'none';
+    document.getElementById('emptyRaw').style.display = 'flex';
+  }
+
+  // All documents removed — return to the initial empty state.
+  function resetWorkspace() {
+    docs = [];
+    clearActivePanel();
+    document.getElementById('fileCard').classList.remove('show');
+    document.getElementById('noFileHint').style.display = '';
+    setStage(0);
+    setProgress(0, 'Preparing…');
+    renderQueue();
   }
 
   /* ── Raw text renderer ────────────────────────────────────────────── */
