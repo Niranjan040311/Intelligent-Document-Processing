@@ -1,3 +1,5 @@
+import asyncio
+import hashlib
 import io
 import re
 from contextlib import asynccontextmanager
@@ -26,12 +28,25 @@ MAX_FILE_SIZE_MB = 20
 
 ocr_reader: easyocr.Reader = None
 
+# In-memory OCR cache: MD5(file bytes) → extracted text
+# Same file uploaded again returns instantly without re-running OCR.
+_ocr_cache: dict[str, str] = {}
+
+# Numeric field keywords — for these, prefer the LAST high-confidence match
+# because grand totals appear at the bottom of invoices, not the top.
+_NUMERIC_KEYWORDS = {
+    "total", "amount", "cgst", "sgst", "igst", "tax", "price",
+    "cost", "fee", "charge", "balance", "due", "payable", "subtotal",
+    "discount", "gross", "net",
+}
+
 
 @asynccontextmanager
 async def lifespan(app):
     global ocr_reader
     print("Loading EasyOCR model...")
-    ocr_reader = easyocr.Reader(["en"], gpu=False)
+    # EasyOCR model loading is CPU/IO bound — run in thread so startup doesn't block.
+    ocr_reader = await asyncio.to_thread(easyocr.Reader, ["en"], gpu=False)
     print("EasyOCR ready.")
     yield
 
@@ -41,7 +56,7 @@ class ExtractRequest(BaseModel):
     fields: List[str]
 
 
-app = FastAPI(title="Document Upload & OCR API", lifespan=lifespan)
+app = FastAPI(title="DocScan IDP API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -55,26 +70,25 @@ def is_allowed_file(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
 
 
+def _md5(data: bytes) -> str:
+    return hashlib.md5(data, usedforsecurity=False).hexdigest()
+
+
 # ── Image preprocessing ──────────────────────────────────────────────────────
 
 def preprocess_for_ocr(img_array: np.ndarray) -> np.ndarray:
-    """Enhance image quality before OCR: grayscale → denoise → CLAHE → sharpen."""
     gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY) if img_array.ndim == 3 else img_array.copy()
 
-    # Upscale small images so fine characters are readable
     h, w = gray.shape
     if h < 1200 or w < 900:
         scale = max(1200 / h, 900 / w)
         gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
 
-    # Light denoising — preserves edges
     gray = cv2.fastNlMeansDenoising(gray, h=8, templateWindowSize=7, searchWindowSize=21)
 
-    # CLAHE: local contrast normalisation (fixes uneven lighting/shadows)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray = clahe.apply(gray)
 
-    # Unsharp mask — makes character edges crisper
     blurred = cv2.GaussianBlur(gray, (0, 0), 3)
     gray = cv2.addWeighted(gray, 1.5, blurred, -0.5, 0)
     gray = np.clip(gray, 0, 255).astype(np.uint8)
@@ -85,38 +99,19 @@ def preprocess_for_ocr(img_array: np.ndarray) -> np.ndarray:
 # ── OCR text post-processing ─────────────────────────────────────────────────
 
 def postprocess_ocr_text(text: str) -> str:
-    """Fix common OCR misreads: ₹ symbol, O/0 confusion, email dots, etc."""
-
-    # ₹ misread as '<' or '& ' before a digit
     text = re.sub(r'[<&]\s*(?=\d)', '₹', text)
-
-    # ₹ misread as '8' at the very start of a price (e.g. 811,428 → ₹11,428)
-    # Pattern: 8 followed immediately by digits + comma + digits (price shape)
     text = re.sub(r'\b8(\d{1,2},\d{3})', r'₹\1', text)
-
-    # 'Rs.' or 'Rs ' or 'INR ' → ₹
     text = re.sub(r'\b(Rs\.?|INR)\s*', '₹', text, flags=re.IGNORECASE)
-
-    # Capital O between digits → 0  (e.g. 12O00 → 12000)
     text = re.sub(r'(?<=\d)[Oo](?=\d)', '0', text)
-
-    # Lowercase l between digits → 1  (e.g. l2,000 → 12,000)
     text = re.sub(r'(?<=\d)l(?=\d)', '1', text)
     text = re.sub(r'\bl(?=\d{2,})', '1', text)
-
-    # Missing dot in email address domains  (@yoactiv com → @yoactiv.com)
     text = re.sub(r'(@[\w-]+)\s+(com|in|org|net|io|co)\b', r'\1.\2', text, flags=re.IGNORECASE)
-
-    # Missing dot in standalone domain-like tokens  (yoactiv com → yoactiv.com)
     text = re.sub(r'\b([\w-]{3,})\s+(com|in|org|net|io)\b(?![\w.])', r'\1.\2', text, flags=re.IGNORECASE)
-
-    # Collapse accidental double spaces
     text = re.sub(r'  +', ' ', text)
-
     return text
 
 
-# ── Core OCR helpers ─────────────────────────────────────────────────────────
+# ── Core OCR ─────────────────────────────────────────────────────────────────
 
 def ocr_image_array(img_array: np.ndarray) -> str:
     processed = preprocess_for_ocr(img_array)
@@ -125,40 +120,53 @@ def ocr_image_array(img_array: np.ndarray) -> str:
     return postprocess_ocr_text(raw)
 
 
-def extract_text(file_bytes: bytes, filename: str) -> str:
+def _extract_text_sync(file_bytes: bytes, filename: str) -> str:
+    """CPU-bound extraction — always called via asyncio.to_thread."""
     ext = Path(filename).suffix.lower()
 
     if ext == ".pdf":
         doc = fitz.open(stream=file_bytes, filetype="pdf")
-        pages_text = []
+        pages = []
         for i, page in enumerate(doc):
-            pix = page.get_pixmap(dpi=300)           # up from 200 → sharper symbols
+            pix = page.get_pixmap(dpi=300)
             img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
-            text = ocr_image_array(np.array(img))
-            pages_text.append(f"--- Page {i + 1} ---\n{text}")
-        return "\n\n".join(pages_text)
+            pages.append(f"--- Page {i + 1} ---\n{ocr_image_array(np.array(img))}")
+        return "\n\n".join(pages)
 
-    elif ext in {".png", ".jpg", ".jpeg"}:
+    if ext in {".png", ".jpg", ".jpeg"}:
         img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
         return ocr_image_array(np.array(img))
 
-    elif ext in {".docx", ".doc"}:
+    if ext in {".docx", ".doc"}:
         doc = Document(io.BytesIO(file_bytes))
         raw = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
         return postprocess_ocr_text(raw)
 
-    elif ext == ".txt":
+    if ext == ".txt":
         return file_bytes.decode("utf-8", errors="ignore")
 
     return ""
 
 
+async def extract_text(file_bytes: bytes, filename: str) -> str:
+    """Async wrapper with MD5 cache — same file never re-OCR'd."""
+    key = _md5(file_bytes)
+    if key in _ocr_cache:
+        print(f"Cache hit for {filename}")
+        return _ocr_cache[key]
+
+    result = await asyncio.to_thread(_extract_text_sync, file_bytes, filename)
+    _ocr_cache[key] = result
+    return result
+
+
 def save_ocr_result(filename: str, text: str) -> Path:
-    stem = Path(filename).stem
-    out_path = OCR_DIR / f"{stem}.txt"
+    out_path = OCR_DIR / f"{Path(filename).stem}.txt"
     out_path.write_text(text, encoding="utf-8")
     return out_path
 
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/", include_in_schema=False)
 def root():
@@ -173,20 +181,17 @@ async def upload_file(file: UploadFile = File(...)):
     if not is_allowed_file(file.filename):
         raise HTTPException(
             status_code=400,
-            detail=f"File type not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
+            detail=f"File type not allowed. Accepted: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
         )
 
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE_MB * 1024 * 1024:
-        raise HTTPException(status_code=400, detail=f"File exceeds {MAX_FILE_SIZE_MB}MB limit")
+        raise HTTPException(status_code=400, detail=f"File exceeds {MAX_FILE_SIZE_MB} MB limit")
 
-    # Save original file
     (UPLOAD_DIR / file.filename).write_bytes(contents)
 
-    # Run OCR / text extraction
-    extracted_text = extract_text(contents, file.filename)
-
-    # Save OCR result to .txt
+    # Non-blocking: OCR runs in a thread pool, event loop stays free
+    extracted_text = await extract_text(contents, file.filename)
     ocr_path = save_ocr_result(file.filename, extracted_text)
 
     return JSONResponse(status_code=200, content={
@@ -199,30 +204,29 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.post("/upload/multiple", summary="Upload & OCR multiple documents")
 async def upload_multiple(files: List[UploadFile] = File(...)):
-    results = []
-    for file in files:
+    async def _process(file: UploadFile) -> dict:
         if not is_allowed_file(file.filename):
-            results.append({"filename": file.filename, "status": "rejected", "reason": "File type not allowed"})
-            continue
+            return {"filename": file.filename, "status": "rejected", "reason": "File type not allowed"}
 
         contents = await file.read()
         if len(contents) > MAX_FILE_SIZE_MB * 1024 * 1024:
-            results.append({"filename": file.filename, "status": "rejected", "reason": "File too large"})
-            continue
+            return {"filename": file.filename, "status": "rejected", "reason": "File too large"}
 
         (UPLOAD_DIR / file.filename).write_bytes(contents)
-        extracted_text = extract_text(contents, file.filename)
+        extracted_text = await extract_text(contents, file.filename)
         ocr_path = save_ocr_result(file.filename, extracted_text)
 
-        results.append({
+        return {
             "filename": file.filename,
             "status": "processed",
             "size_bytes": len(contents),
             "ocr_saved_to": str(ocr_path),
             "extracted_text": extracted_text,
-        })
+        }
 
-    return JSONResponse(status_code=200, content={"results": results})
+    # All files processed concurrently — not sequentially
+    results = await asyncio.gather(*[_process(f) for f in files])
+    return JSONResponse(status_code=200, content={"results": list(results)})
 
 
 @app.get("/files", summary="List uploaded files and their OCR results")
@@ -238,11 +242,17 @@ def list_files():
     return {"files": files, "count": len(files)}
 
 
+# ── Field extraction ──────────────────────────────────────────────────────────
+
+def _is_numeric_field(field_lower: str) -> bool:
+    return any(kw in field_lower for kw in _NUMERIC_KEYWORDS)
+
+
 def extract_single_field(lines: list[str], field: str) -> dict:
     field_lower = field.lower()
     field_words = [w for w in field_lower.split() if len(w) > 2]
 
-    best_value, best_conf = None, 0.0
+    candidates: list[tuple[float, int, str]] = []  # (confidence, line_index, value)
 
     for i, line in enumerate(lines):
         line_lower = line.lower()
@@ -274,12 +284,23 @@ def extract_single_field(lines: list[str], field: str) -> dict:
             else:
                 continue
 
-        if conf > best_conf:
-            best_value, best_conf = candidate, conf
+        candidates.append((conf, i, candidate))
 
-    if best_value:
-        return {"field": field, "value": best_value, "confidence": round(min(best_conf * 100, 99.0), 1)}
-    return {"field": field, "value": "Not detected", "confidence": 0.0}
+    if not candidates:
+        return {"field": field, "value": "Not detected", "confidence": 0.0}
+
+    if _is_numeric_field(field_lower):
+        # Numeric fields: among candidates within 15% of best confidence,
+        # prefer the LAST occurrence — grand totals sit at the bottom of documents.
+        best_conf = max(c[0] for c in candidates)
+        threshold = best_conf * 0.85
+        eligible = [c for c in candidates if c[0] >= threshold]
+        conf, _, value = eligible[-1]
+    else:
+        # Non-numeric fields: highest confidence wins
+        conf, _, value = max(candidates, key=lambda x: x[0])
+
+    return {"field": field, "value": value, "confidence": round(min(conf * 100, 99.0), 1)}
 
 
 @app.post("/extract", summary="Extract specific fields from OCR text with confidence scores")
@@ -289,8 +310,13 @@ async def extract_fields(req: ExtractRequest):
     if not req.fields:
         raise HTTPException(status_code=400, detail="fields list cannot be empty")
 
-    lines = [l.strip() for l in req.text.splitlines()]
-    results = [extract_single_field(lines, f) for f in req.fields]
+    lines = [line.strip() for line in req.text.splitlines()]
+
+    # All fields extracted concurrently in thread pool
+    results = await asyncio.gather(
+        *[asyncio.to_thread(extract_single_field, lines, f) for f in req.fields]
+    )
+    results = list(results)
 
     found = sum(1 for r in results if r["value"] != "Not detected")
     overall = round(sum(r["confidence"] for r in results) / len(results), 1) if results else 0
@@ -305,4 +331,4 @@ async def extract_fields(req: ExtractRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "ocr_ready": ocr_reader is not None}
+    return {"status": "ok", "ocr_ready": ocr_reader is not None, "cache_entries": len(_ocr_cache)}
