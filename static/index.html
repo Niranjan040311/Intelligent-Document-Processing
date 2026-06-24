@@ -623,6 +623,18 @@
   .q-remove:hover { background: var(--r10); color: var(--red); }
   .q-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+  .q-retry {
+    flex-shrink: 0;
+    width: 18px; height: 18px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: none; border-radius: 5px;
+    background: transparent; color: var(--accent);
+    font-size: 13px; line-height: 1; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .q-retry:hover { background: var(--a10); color: var(--accent); }
+  .q-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
   /* ─── DOC STATUS VIEW ────────────────────────────────────────────── */
   .doc-status { display: none; flex: 1; flex-direction: column; align-items: center;
     justify-content: center; gap: 18px; padding: 40px 32px; text-align: center; }
@@ -638,6 +650,13 @@
   .ds-badge.done { background: var(--g10); border-color: var(--g20); }
   .ds-badge.err  { background: var(--r10); border-color: rgba(239,68,68,0.25); }
   .ds-badge svg { width: 30px; height: 30px; }
+  /* Pulse the badge + spin its icon while a doc is actively processing */
+  .ds-badge.proc { animation: dsPulse 1.4s ease-in-out infinite; }
+  .ds-badge.proc svg { animation: spin 1.6s linear infinite; }
+  @keyframes dsPulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(240,165,0,0.35); }
+    50%     { box-shadow: 0 0 0 8px rgba(240,165,0,0); }
+  }
 
   .ds-name { font-size: 15px; font-weight: 700; color: var(--t1); word-break: break-all; max-width: 460px; }
   .ds-state { font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
@@ -1001,6 +1020,54 @@
 
   .acc-sub { font-size: 11px; color: var(--t3); }
 
+  /* Method breakdown — shows the two-tier flow (label match vs GPT-4.1) */
+  .method-row { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+  .method-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10px; font-weight: 600; letter-spacing: .2px;
+    padding: 3px 8px; border-radius: 20px; cursor: default;
+  }
+  .method-pill .method-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .method-keyword { background: rgba(63,185,80,0.12); border: 1px solid rgba(63,185,80,0.30); color: var(--green); }
+  .method-keyword .method-dot { background: var(--green); }
+  .method-ai { background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.30); color: #34d399; }
+  .method-ai .method-dot { background: #34d399; }
+  /* Hide a tier's pill when it contributed nothing */
+  .method-pill.zero { display: none; }
+
+  /* ─── LIVE TWO-TIER FLOW STRIP ──────────────────────────────────── */
+  .flow-strip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px; margin-bottom: 12px;
+    background: var(--s1); border: 1px solid var(--b1); border-radius: 10px;
+    animation: slideUp .25s ease;
+  }
+  .flow-step { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0; opacity: .4; transition: opacity .3s; }
+  .flow-step.active, .flow-step.done { opacity: 1; }
+  .flow-ic {
+    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    border: 2px solid var(--b2); background: var(--s2);
+    position: relative; transition: all .3s;
+  }
+  .flow-step.active .flow-ic { border-color: var(--accent); }
+  .flow-step.active .flow-ic::after {
+    content: ''; position: absolute; inset: 3px; border-radius: 50%;
+    border: 2px solid transparent; border-top-color: var(--accent);
+    animation: spin .7s linear infinite;
+  }
+  .flow-step.done .flow-ic { border-color: var(--green); background: var(--green); }
+  .flow-step.done .flow-ic::after {
+    content: '✓'; position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: var(--bg);
+  }
+  .flow-step.skip .flow-ic { border-color: var(--b2); border-style: dashed; }
+  .flow-txt { min-width: 0; }
+  .flow-name { font-size: 12px; font-weight: 600; color: var(--t1); }
+  .flow-detail { font-size: 10.5px; color: var(--t3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .flow-arrow { color: var(--t3); font-size: 14px; flex-shrink: 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   /* ─── EXTRACTION CARDS ───────────────────────────────────────────── */
   .xcards { display: flex; flex-direction: column; gap: 8px; }
 
@@ -1044,6 +1111,21 @@
   .xval.review  { background: var(--a10); border: 1px solid var(--a20);            color: var(--accent); }
   .xval.invalid { background: var(--r10); border: 1px solid rgba(239,68,68,0.25);  color: var(--red); }
   .xval.missing { background: rgba(255,255,255,0.04); border: 1px solid var(--b1); color: var(--t3); }
+
+  /* AI tag — shown when a value was recovered by the GPT-4.1 fallback
+     (keyword-proximity couldn't find it by label). */
+  .xai-tag {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    color: #34d399;
+    cursor: default;
+    user-select: none;
+  }
 
   .xcard-field {
     font-size: 9px;
@@ -1117,11 +1199,21 @@
     font-weight: 700;
     min-width: 38px;
     text-align: right;
+    white-space: nowrap;
   }
+  /* widen when showing a before→after transition like "82% → 99%" */
+  .xbar-pct:has(.xconf-after) { min-width: 78px; }
 
   .ch .xbar-pct { color: var(--green); }
   .cm .xbar-pct { color: var(--accent); }
   .cl .xbar-pct { color: var(--red); }
+
+  /* Confidence transition (EasyOCR → GPT-4.1) */
+  .xconf-before { color: var(--t3); text-decoration: line-through; font-weight: 600; }
+  .xconf-arrow  { color: #34d399; margin: 0 4px; font-weight: 700; }
+  .xconf-after  { color: #34d399; }
+  /* AI-corrected bar uses the teal gradient regardless of validation colour */
+  .xbar-fill.xbar-ai { background: linear-gradient(90deg,#10b981,#34d399) !important; box-shadow: 0 0 6px rgba(16,185,129,.5) !important; }
 
   /* ─── RAW TEXT ───────────────────────────────────────────────────── */
   .ocr-output {
@@ -1539,6 +1631,25 @@
     <!-- Extracted Fields Panel -->
     <div class="tab-panel active" id="panelExtracted">
 
+      <!-- Live two-tier extraction flow — shown only while extracting -->
+      <div class="flow-strip" id="flowStrip" style="display:none;">
+        <div class="flow-step" id="flowStep1">
+          <span class="flow-ic"></span>
+          <div class="flow-txt">
+            <div class="flow-name">Label matching</div>
+            <div class="flow-detail" id="flowDetail1">Scanning for labelled fields…</div>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step" id="flowStep2">
+          <span class="flow-ic"></span>
+          <div class="flow-txt">
+            <div class="flow-name">GPT-4.1 fallback</div>
+            <div class="flow-detail" id="flowDetail2">Waiting…</div>
+          </div>
+        </div>
+      </div>
+
       <div class="empty-state" id="emptyExtracted">
         <div class="empty-icon">
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
@@ -1567,6 +1678,15 @@
             <div class="acc-label">Overall Accuracy</div>
             <div class="acc-found" id="fieldsFoundText">— <span>/ — fields</span></div>
             <div class="acc-sub" id="fieldsFoundSub">detected in document</div>
+            <!-- How the fields were found: keyword-proximity vs GPT-4.1 fallback -->
+            <div class="method-row" id="methodRow" style="display:none;">
+              <span class="method-pill method-keyword" id="pillKeyword" title="Found instantly by label/keyword matching — offline, no AI">
+                <span class="method-dot"></span><span id="kwCount">0</span> by label
+              </span>
+              <span class="method-pill method-ai" id="pillAI" title="Recovered by GPT-4.1 from context when no label was present">
+                <span class="method-dot"></span><span id="aiCount">0</span> by AI
+              </span>
+            </div>
           </div>
         </div>
         <div class="xcards" id="extractCards"></div>
@@ -1651,8 +1771,13 @@
 
   // Batch state — every selected document, processed one by one.
   let docs = [];        // [{ file, name, size, status, stage, pct, ocrText, words, chars, pages, error }]
+  let batchRunning = false; // true while the processing loop is active — prevents a 2nd loop
   let activeDoc = null; // the document OBJECT currently shown in the right panel (removal-safe)
   let statusDoc = null; // document whose live status is shown in the right panel (null = none)
+  // Monotonic token bumped every time the panel changes ownership. Any async
+  // callback captures the token at start and bails if it no longer matches —
+  // this makes a stale finalization repainting the wrong doc impossible.
+  let panelGen = 0;
 
   /* ── Utils ────────────────────────────────────────────────────────── */
   function fmt(b) {
@@ -1836,6 +1961,9 @@
     // Can't pull a document out from under itself while it's mid-pipeline.
     const removeBtn = d.status === 'processing' ? '' :
       `<button class="q-remove" title="Remove document" aria-label="Remove ${safeName}" onclick="removeDoc(${i}, event)">×</button>`;
+    // Failed docs get a Retry button to re-process without re-uploading.
+    const retryBtn = d.status === 'error' ?
+      `<button class="q-retry" title="Retry" aria-label="Retry ${safeName}" onclick="retryDoc(${i}, event)">↻</button>` : '';
 
     return `
       <div class="queue-item ${d.status}${activeCls}" data-i="${i}" onclick="onQueueClick(${i})">
@@ -1843,6 +1971,7 @@
           <span class="q-badge">${ext}</span>
           <span class="q-title" title="${safeName}">${safeName}</span>
           <span class="status-chip ${chip[0]}">${liveDot}<span>${chip[1]}</span></span>
+          ${retryBtn}
           ${removeBtn}
         </div>
         <div class="q-steps">${steps}</div>
@@ -1880,7 +2009,7 @@
       msg = 'Waiting in line — processing starts as soon as the documents ahead of it finish.';
       icon = `<svg viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`;
     } else { // processing
-      badgeCls = ''; stateCls = 'proc'; stateText = stageWord(d.stage) + '…';
+      badgeCls = 'proc'; stateCls = 'proc'; stateText = stageWord(d.stage) + '…';
       msg = `This document is being processed right now — ${_DS_STAGES[Math.max(0, d.stage - 1)]} stage.`;
       icon = `<svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="9" ry="5"/><circle cx="12" cy="12" r="2.5"/></svg>`;
     }
@@ -1911,9 +2040,66 @@
       <div class="ds-msg">${msg}</div>`;
 
     el.classList.add('show');
-    // Highlight the clicked document in the queue (left pipeline card keeps
-    // tracking whatever is actively processing).
-    activeDoc = d;
+
+    // Viewing this doc's live status claims the panel. Only bump the generation
+    // on an actual CHANGE of viewed doc (not on every live refresh).
+    if (activeDoc !== d) {
+      activeDoc = d;
+      ++panelGen;
+    }
+
+    // Update the sidebar file card to track THIS doc's live pipeline (its name,
+    // stage, progress %) instead of leaving the previously-viewed doc's state.
+    document.getElementById('fileCard').classList.add('show');
+    document.getElementById('noFileHint').style.display = 'none';
+    document.getElementById('fName').textContent = d.name;
+    document.getElementById('fSize').textContent = fmt(d.size);
+    document.getElementById('statsGrid').classList.remove('show');
+    if (d.status === 'processing') {
+      setStage(d.stage || 1);
+      setProgress(d.pct || 0, stageWord(d.stage) + '…');
+      setChip('processing', stageWord(d.stage));
+    } else if (d.status === 'queued') {
+      setStage(0);
+      setProgress(0, 'Queued');
+      setChip('processing', 'Queued');
+    } else if (d.status === 'error') {
+      setStage(0);
+      setProgress(0, 'Failed');
+      setChip('err', 'Error');
+    }
+
+    // Clear any leftover RESULT cards from a previously-viewed COMPLETED doc so
+    // we don't show stale extracted data behind the live status.
+    document.getElementById('extractionResults').style.display = 'none';
+    document.getElementById('emptyExtracted').style.display = 'flex';
+    document.getElementById('flowStrip').style.display = 'none';
+    renderQueue();
+  }
+
+  // Retry a failed document — reset it to queued and re-run the batch drainer.
+  async function retryDoc(i, ev) {
+    if (ev) ev.stopPropagation();
+    const d = docs[i];
+    if (!d || d.status !== 'error') return;
+    dlog('batch', `Retrying "${d.name}" (was: ${d.error || 'failed'})`);
+    d.status = 'queued';
+    d.stage = 0; d.pct = 0; d.error = '';
+    d.extraction = null;
+    renderQueue();
+    toast(`Retrying ${d.name}…`);
+
+    // If a batch is already draining, it will pick this up. Otherwise start one.
+    if (batchRunning) return;
+    batchRunning = true;
+    try {
+      let next;
+      while ((next = docs.find(x => x.status === 'queued'))) {
+        await processDoc(next);
+      }
+    } finally {
+      batchRunning = false;
+    }
     renderQueue();
   }
 
@@ -1943,27 +2129,49 @@
     const files = Array.from(fileList || []).filter(Boolean);
     if (!files.length) { dlog('batch', 'handleFiles called with no files'); return; }
 
-    dlog('batch', `Starting batch of ${files.length} document(s)`,
-      files.map(f => ({ name: f.name, size: f.size, type: f.type })));
-
-    docs = files.map(f => ({
+    // Build the new doc records and APPEND them to the existing list (don't
+    // replace) so re-uploading / adding more files never wipes prior results.
+    const newDocs = files.map(f => ({
       file: f, name: f.name, size: f.size,
       status: 'queued', stage: 0, pct: 0,
       ocrText: '', words: 0, chars: 0, pages: 0, error: '',
     }));
+
+    // If a batch is already running, just enqueue the new docs — the existing
+    // loop will pick them up. Starting a second loop here would process docs
+    // TWICE (the bug where a re-upload runs extraction two times).
+    if (batchRunning) {
+      docs.push(...newDocs);
+      dlog('batch', `Batch already running — enqueued ${newDocs.length} more, will be picked up`);
+      renderQueue();
+      toast(`Added ${newDocs.length} to the queue`);
+      return;
+    }
+
+    dlog('batch', `Starting batch of ${files.length} document(s)`,
+      files.map(f => ({ name: f.name, size: f.size, type: f.type })));
+
+    docs = newDocs;
     activeDoc = null;
     renderQueue();
 
     if (files.length > 1) toast(`Processing ${files.length} documents one by one…`);
 
-    // Sequential — pull the next queued doc by status so removals mid-batch are safe.
-    let next, index = 0;
-    while ((next = docs.find(d => d.status === 'queued'))) {
-      const pos = docs.indexOf(next) + 1;
-      dlog('batch', `→ Processing document ${pos}/${docs.length}: "${next.name}"`);
-      await processDoc(next);
-      dlog('batch', `← Finished document ${pos}/${docs.length}: "${next.name}" → status=${next.status}`);
-      index++;
+    batchRunning = true;
+    try {
+      // Sequential — pull the next queued doc by status so removals (and newly
+      // enqueued docs) mid-batch are handled safely. The loop keeps draining
+      // until no queued docs remain, so anything added mid-batch is covered —
+      // including stragglers enqueued right as the loop was about to exit.
+      let next;
+      while ((next = docs.find(d => d.status === 'queued'))) {
+        const pos = docs.indexOf(next) + 1;
+        dlog('batch', `→ Processing document ${pos}/${docs.length}: "${next.name}"`);
+        await processDoc(next);
+        dlog('batch', `← Finished document ${pos}/${docs.length}: "${next.name}" → status=${next.status}`);
+      }
+    } finally {
+      batchRunning = false;
     }
 
     const summary = docs.reduce((a, d) => (a[d.status] = (a[d.status] || 0) + 1, a), {});
@@ -1996,6 +2204,7 @@
 
   async function processDoc(d) {
     activeDoc = d;
+    let myGen = ++panelGen;   // this doc now owns the panel (re-synced if user watches it)
     currentFile = d.name;
     ocrText = '';
 
@@ -2025,8 +2234,10 @@
 
     // Abort the request if the server never responds (e.g. it restarted
     // mid-upload under --reload), so the doc can't freeze at "OCR" forever.
+    // 5 min ceiling — dense multi-page scans can legitimately take a while, and
+    // OCR is serialised server-side so a doc may also wait behind another.
     const ctrl = new AbortController();
-    const timeoutId = setTimeout(() => ctrl.abort(), 120000); // 2 min ceiling
+    const timeoutId = setTimeout(() => ctrl.abort(), 300000); // 5 min ceiling
 
     try {
       // Simulate preprocessing stage while the request is in-flight.
@@ -2042,7 +2253,7 @@
 
       const res = await fetchPromise;
       clearTimeout(timeoutId);
-      if (activeDoc === d) setProgress(85, 'Finishing up…');
+      if (panelGen === myGen) setProgress(85, 'Finishing up…');
       dlog('doc', `[RESPONSE] "${d.name}" → HTTP ${res.status} ${res.statusText} (ok=${res.ok})`);
 
       if (!res.ok) {
@@ -2061,6 +2272,21 @@
         { words: d.words, chars: d.chars, pages: d.pages, textPreview: d.ocrText.slice(0, 80) });
 
       if (!d.ocrText) dlog('doc', `[WARN] "${d.name}" returned empty extracted_text — check OCR/backend`);
+
+      // If a DIFFERENT doc is now being viewed (user clicked away to another
+      // doc), DON'T paint this doc's result — just mark it done in the queue.
+      // The result shows later when the user views it. If the user is watching
+      // THIS doc's live status, we DO continue and show its finished result.
+      if (activeDoc !== d) {
+        dz.classList.remove('scanning');
+        renderQueue();
+        dlog('doc', `[COMPLETE] "${d.name}" done in background — another doc is being viewed`);
+        return;
+      }
+      // We're still on this doc — sync the panel generation so the rest of the
+      // finalization (which checks myGen) paints correctly even if showStatus(d)
+      // bumped the generation while we were watching.
+      myGen = panelGen;
 
       // Enter the RESULT stage. If fields are configured, data extraction runs
       // next inside showDocResult() — show it as in-progress, then mark it done.
@@ -2084,7 +2310,7 @@
       derr('doc', `[ERROR] "${d.name}" failed at stage ${d.stage} (${stageWord(d.stage)})`, err);
       dz.classList.remove('scanning');
       // Only repaint the shared panel if this doc still owns it.
-      if (activeDoc === d) {
+      if (panelGen === myGen) {
         setStage(0);
         setProgress(0, 'Failed');
         setChip('err', 'Error');
@@ -2095,12 +2321,22 @@
   }
 
   // Load a processed document's OCR text, stats and extraction into the panel.
-  async function showDocResult(d) {
-    dlog('result', `showDocResult("${d.name}") — fields configured: ${userFields.length}`, userFields.slice());
+  // `forceReextract` = true re-runs extraction even if a cached result exists
+  // (used after the field list changes); otherwise a cached result is shown
+  // instantly with no re-fetch and no stale-data flash.
+  async function showDocResult(d, forceReextract) {
+    dlog('result', `showDocResult("${d.name}") — fields configured: ${userFields.length}, cached: ${!!d.extraction}`, userFields.slice());
     hideStatus();
     activeDoc = d;
+    const myGen = panelGen;   // the panel generation this render belongs to
     ocrText = d.ocrText;
     currentFile = d.name;
+
+    // Restore the file card (showStatus may have hidden it) with THIS doc's header.
+    document.getElementById('fileCard').classList.add('show');
+    document.getElementById('noFileHint').style.display = 'none';
+    document.getElementById('fName').textContent = d.name;
+    document.getElementById('fSize').textContent = fmt(d.size);
 
     document.getElementById('sWords').textContent = d.words.toLocaleString();
     document.getElementById('sChars').textContent = d.chars.toLocaleString();
@@ -2113,10 +2349,30 @@
     document.getElementById('copyBtn').disabled = false;
     document.getElementById('dlBtn').disabled = false;
 
+    // Clear any leftover result/strip from the previously-viewed doc so we never
+    // briefly show stale data while this doc loads.
+    document.getElementById('flowStrip').style.display = 'none';
+    document.getElementById('extractionResults').style.display = 'none';
+    document.getElementById('emptyExtracted').style.display = 'flex';
+
     renderQueue();
 
-    if (userFields.length > 0) {
-      // RESULT stage = data extraction. Reflect it live in the pipeline.
+    // A cache is only valid if it was built for the CURRENT field list. Adding
+    // or removing a field changes the key, so every doc re-extracts on view.
+    const fieldsKey = userFields.join('');
+    const cacheValid = d.extraction && d.extraction._fieldsKey === fieldsKey;
+
+    if (userFields.length === 0) {
+      dlog('result', `[EXTRACT] skipped for "${d.name}" — no fields configured`);
+      d.extraction = null;
+      switchTab('raw');
+    } else if (cacheValid && !forceReextract) {
+      // Already extracted with the same fields — paint cache instantly, no re-fetch.
+      dlog('result', `[EXTRACT] using cached result for "${d.name}"`);
+      switchTab('extracted');
+      renderExtractionResults(d.extraction);
+    } else {
+      // First time (or fields changed) — run the live two-tier extraction.
       setStage(4);
       setProgress(95, 'Extracting data…');
       setChip('processing', 'Extracting');
@@ -2125,14 +2381,11 @@
       dlog('result', `[EXTRACT] running field extraction for "${d.name}"`);
       await runExtraction();
       dlog('result', `[EXTRACT DONE] "${d.name}"`);
-    } else {
-      dlog('result', `[EXTRACT] skipped for "${d.name}" — no fields configured`);
-      switchTab('raw');
     }
 
     // OCR + any field extraction finished — light up RESULT as complete.
     // Guard against the user navigating to another doc mid-extraction.
-    if (activeDoc === d) {
+    if (panelGen === myGen) {
       setStage(4, true);
       setProgress(100, userFields.length ? 'Extraction complete' : 'OCR complete');
       setChip('done', userFields.length ? 'Done' : 'OCR Done');
@@ -2145,6 +2398,8 @@
   // Click a completed queue item to revisit its result.
   function viewDoc(d) {
     if (!d || d.status !== 'done') return;
+    activeDoc = d;
+    ++panelGen;   // viewing claims the panel — stops any background doc finalizing onto it
     document.getElementById('fileCard').classList.add('show');
     document.getElementById('noFileHint').style.display = 'none';
     document.getElementById('fName').textContent = d.name;
@@ -2201,10 +2456,31 @@
     el.style.display = 'block';
   }
 
-  /* ── Field extraction ─────────────────────────────────────────────── */
+  /* ── Field extraction — two-tier live flow ───────────────────────── */
+
+  // Drive one step of the visible flow strip.
+  function setFlowStep(n, state, detail) {
+    const step = document.getElementById('flowStep' + n);
+    if (step) {
+      step.classList.remove('active', 'done', 'skip');
+      if (state) step.classList.add(state);
+    }
+    if (detail != null) document.getElementById('flowDetail' + n).textContent = detail;
+  }
+
   async function runExtraction() {
     if (!ocrText) { dlog('extract', 'aborted — no OCR text available'); toast('Upload a document first', 'err'); return; }
     if (!userFields.length) { dlog('extract', 'aborted — no fields configured'); toast('Add at least one field to extract', 'err'); return; }
+
+    // Snapshot the doc + inputs this run belongs to. If the user switches docs
+    // mid-extraction, every UI write below is skipped (guarded by `owns()`),
+    // so a slow in-flight result can never paint onto the wrong document.
+    const runDoc = activeDoc;
+    const runGen = panelGen;
+    const runText = ocrText;
+    const runFields = userFields.slice();
+    // Owns the panel only if both the doc AND the generation still match.
+    const owns = () => activeDoc === runDoc && panelGen === runGen;
 
     document.getElementById('extractBtn').disabled = true;
     document.getElementById('extractBtn').textContent = 'Extracting…';
@@ -2212,33 +2488,124 @@
     document.getElementById('extractionResults').style.display = 'none';
     switchTab('extracted');
 
-    dlog('extract', `[FETCH] POST ${API}/extract — "${currentFile}"`,
-      { fields: userFields.slice(), textChars: ocrText.length });
+    // Show the live flow strip, reset both steps.
+    const strip = document.getElementById('flowStrip');
+    strip.style.display = 'flex';
+    setFlowStep(1, 'active', 'Scanning for labelled fields…');
+    setFlowStep(2, '', 'Waiting…');
 
     try {
+      // ── TIER 1: keyword-proximity (offline) ──
+      dlog('extract', `[TIER1] POST ${API}/extract — "${currentFile}"`, { fields: runFields });
       const res = await fetch(`${API}/extract`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: ocrText, fields: userFields }),
+        body: JSON.stringify({ text: runText, fields: runFields }),
       });
-
-      dlog('extract', `[RESPONSE] "${currentFile}" → HTTP ${res.status} ${res.statusText} (ok=${res.ok})`);
-
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Extraction failed' }));
-        derr('extract', `[RESPONSE] "${currentFile}" failed with HTTP ${res.status}`, err);
         throw new Error(err.detail || `Extraction failed (HTTP ${res.status})`);
       }
-
       const data = await res.json();
-      dlog('extract', `[OK] "${currentFile}" — ${data.fields_found}/${data.fields_total} fields, accuracy ${data.overall_accuracy}%`, data);
-      renderExtractionResults(data);
-      toast(`${data.fields_found} of ${data.fields_total} fields found`, 'ok');
+
+      // Tag the result with the exact field list it was built for, so a cached
+      // result is only reused when the fields still match (adding/removing a
+      // field invalidates every doc's cache, not just the active one).
+      data._fieldsKey = runFields.join('');
+
+      // Remember each field's Tier-1 (EasyOCR/keyword) confidence so we can show
+      // a "before → after" transition if GPT-4.1 later overrides it.
+      data.extractions.forEach(e => { e.kwConfidence = e.confidence; });
+
+      const tier1Found = data.fields_found;
+      const recheck = data.recheck_fields || [];
+      dlog('extract', `[TIER1 OK] ${tier1Found}/${data.fields_total} by label, ${recheck.length} to recheck`, data);
+
+      // ALWAYS cache the tier-1 result on the doc, even if the user has navigated
+      // away — so coming back shows it instantly instead of re-extracting. Only
+      // the UI painting below is skipped when this doc no longer owns the panel.
+      runDoc.extraction = data;
+
+      // If the user navigated away while Tier 1 was in flight, skip the UI work
+      // (the result is cached for when they return), but DON'T abort the whole
+      // run — Tier 2 still needs to run and update the cache.
+      const paint1 = owns();
+
+      if (paint1) {
+        await new Promise(r => setTimeout(r, 450));
+        if (owns()) {
+          setFlowStep(1, 'done', `${tier1Found} found by label`);
+          renderExtractionResults(data);
+        }
+      }
+
+      // ── TIER 2: GPT-4.1 — runs for missing AND suspicious fields, and its
+      // answer OVERRIDES a wrong Tier-1 grab (e.g. "Name" → "Primary?"). ──
+      if (recheck.length > 0 && data.llm_available) {
+        if (owns()) setFlowStep(2, 'active', `Asking GPT-4.1 to verify ${recheck.length} field${recheck.length === 1 ? '' : 's'}…`);
+        dlog('extract', `[TIER2] POST ${API}/extract/llm — ${recheck.length} field(s)`, { recheck });
+        // Abort if GPT-4.1 doesn't respond — otherwise the step spins forever.
+        const llmCtrl = new AbortController();
+        const llmTimeout = setTimeout(() => llmCtrl.abort(), 45000); // 45s ceiling
+        try {
+          const lres = await fetch(`${API}/extract/llm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: runText, fields: recheck }),
+            signal: llmCtrl.signal,
+          });
+          clearTimeout(llmTimeout);
+          if (!lres.ok) throw new Error(`LLM endpoint HTTP ${lres.status}`);
+          const ldata = await lres.json();
+          const recovered = (ldata.extractions || []).length;
+          dlog('extract', `[TIER2 OK] GPT-4.1 returned ${recovered}/${recheck.length}`, ldata);
+
+          // Merge GPT-4.1 results in, preserving the original keyword confidence
+          // on each overridden field for the before→after transition. This ALWAYS
+          // updates the cache (even if the user navigated away) so coming back is
+          // instant; only the on-screen render is skipped when not owned.
+          if (recovered > 0) {
+            const byField = {};
+            ldata.extractions.forEach(e => { byField[e.field] = e; });
+            data.extractions = data.extractions.map(e => {
+              const hit = byField[e.field];
+              if (!hit) return e;
+              return { ...hit, kwConfidence: e.kwConfidence, prevValue: e.value };
+            });
+            data.fields_found = data.extractions.filter(e => e.value !== 'Not detected').length;
+            data.needs_review = data.extractions.filter(e => ['review', 'invalid'].includes((e.validation || {}).status)).length;
+            const confs = data.extractions.map(e => e.confidence || 0);
+            data.overall_accuracy = confs.length ? Math.round(confs.reduce((a, b) => a + b, 0) / confs.length * 10) / 10 : 0;
+            runDoc.extraction = data;   // refresh the cache with merged result
+            if (owns()) renderExtractionResults(data);
+          }
+          if (owns()) setFlowStep(2, 'done', recovered > 0 ? `${recovered} fixed/found by AI` : 'No correction needed');
+        } catch (lerr) {
+          clearTimeout(llmTimeout);
+          derr('extract', `[TIER2 ERROR]`, lerr);
+          if (owns()) {
+            const reason = lerr.name === 'AbortError' ? 'GPT-4.1 timed out' : 'AI fallback unavailable';
+            setFlowStep(2, 'skip', reason);
+          }
+        }
+      } else if (recheck.length === 0) {
+        if (owns()) setFlowStep(2, 'skip', 'Not needed — all confident by label');
+      } else {
+        if (owns()) setFlowStep(2, 'skip', 'GPT-4.1 not configured');
+      }
+
+      if (owns()) toast(`${data.fields_found} of ${data.fields_total} fields found`, 'ok');
+
+      // Fade the strip out after a moment so the result is the focus.
+      setTimeout(() => { if (owns()) strip.style.display = 'none'; }, 2200);
 
     } catch (err) {
       derr('extract', `[ERROR] extraction failed for "${currentFile}"`, err);
-      document.getElementById('emptyExtracted').style.display = 'flex';
-      toast(err.message, 'err');
+      if (owns()) {
+        strip.style.display = 'none';
+        document.getElementById('emptyExtracted').style.display = 'flex';
+        toast(err.message, 'err');
+      }
     } finally {
       document.getElementById('extractBtn').disabled = false;
       document.getElementById('extractBtn').innerHTML = `
@@ -2269,6 +2636,22 @@
     document.getElementById('fieldsFoundSub').textContent =
       review > 0 ? `${review} need${review === 1 ? 's' : ''} review` : 'detected in document';
 
+    // Method breakdown — make the two-tier flow visible: how many fields were
+    // found instantly by label vs recovered by the GPT-4.1 fallback.
+    const aiCount = data.extractions.filter(e => e.source === 'llm' && e.value !== 'Not detected').length;
+    const kwCount = data.extractions.filter(e => e.source !== 'llm' && e.value !== 'Not detected').length;
+    const methodRow = document.getElementById('methodRow');
+    if (kwCount + aiCount > 0) {
+      document.getElementById('kwCount').textContent = kwCount;
+      document.getElementById('aiCount').textContent = aiCount;
+      // Hide a pill entirely when its tier found nothing.
+      document.getElementById('pillKeyword').classList.toggle('zero', kwCount === 0);
+      document.getElementById('pillAI').classList.toggle('zero', aiCount === 0);
+      methodRow.style.display = 'flex';
+    } else {
+      methodRow.style.display = 'none';
+    }
+
     const cards = document.getElementById('extractCards');
     cards.innerHTML = '';
 
@@ -2285,10 +2668,30 @@
 
       card.dataset.field = item.field;
       const safeMsg = (v.message || '').replace(/"/g, '&quot;');
+      const aiTag = item.source === 'llm'
+        ? `<span class="xai-tag" title="Found by GPT-4.1 (understands context), not a label match">AI</span>`
+        : '';
+
+      // Confidence transition: if GPT-4.1 CORRECTED a value the keyword tier had
+      // already found (a real prior value, not a missing field), show the
+      // EasyOCR confidence → GPT-4.1 confidence (e.g. 82% → 99%).
+      const hadPriorValue = item.prevValue && item.prevValue !== 'Not detected';
+      const overridden = item.source === 'llm'
+        && hadPriorValue
+        && typeof item.kwConfidence === 'number'
+        && Math.round(item.kwConfidence) !== Math.round(item.confidence);
+      const pctDisplay = notFound ? '—'
+        : overridden
+          ? `<span class="xconf-before">${Math.round(item.kwConfidence)}%</span>`
+            + `<span class="xconf-arrow">→</span>`
+            + `<span class="xconf-after">${item.confidence}%</span>`
+          : item.confidence + '%';
+
       card.innerHTML = `
         <div class="xcard-head">
           <div class="xcard-field">${item.field}</div>
           <div class="xcard-head-right">
+            ${aiTag}
             <span class="xval ${v.status}" title="${safeMsg}">${badge}</span>
             <button class="xcard-remove" onclick="removeExtractedField('${item.field.replace(/'/g, "\\'")}')" title="Remove field" aria-label="Remove ${item.field}">×</button>
           </div>
@@ -2296,10 +2699,19 @@
         <div class="xcard-value${notFound ? ' missing' : ''}">${item.value}</div>
         <div class="xbar-row">
           <div class="xbar-track">
-            <div class="xbar-fill" style="width:${notFound ? 0 : item.confidence}%"></div>
+            <div class="xbar-fill${overridden ? ' xbar-ai' : ''}" style="width:${notFound ? 0 : item.confidence}%"></div>
           </div>
-          <span class="xbar-pct">${notFound ? '—' : item.confidence + '%'}</span>
+          <span class="xbar-pct">${pctDisplay}</span>
         </div>`;
+
+      // Animate the bar from the EasyOCR value up to the GPT-4.1 value.
+      if (overridden) {
+        const barFill = card.querySelector('.xbar-fill');
+        barFill.style.width = Math.round(item.kwConfidence) + '%';
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          barFill.style.width = item.confidence + '%';
+        }));
+      }
 
       cards.appendChild(card);
     });
