@@ -1,7 +1,9 @@
 import asyncio
 import hashlib
 import io
+import logging
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List
@@ -18,6 +20,16 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
+
+# ── Logging ────────────────────────────────────────────────────────────────
+# Step-by-step diagnostics so a failing document can be pinpointed in the
+# server console. Tune verbosity with the level below (DEBUG → INFO → WARNING).
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("docscan")
 
 UPLOAD_DIR = Path("uploads")
 OCR_DIR = Path("ocr_results")
@@ -124,14 +136,23 @@ def ocr_image_array(img_array: np.ndarray) -> str:
 def _extract_text_sync(file_bytes: bytes, filename: str) -> str:
     """CPU-bound extraction — always called via asyncio.to_thread."""
     ext = Path(filename).suffix.lower()
+    log.info("OCR start: %s (%s, %d bytes)", filename, ext, len(file_bytes))
 
     if ext == ".pdf":
         doc = fitz.open(stream=file_bytes, filetype="pdf")
+        log.info("PDF '%s' has %d page(s)", filename, doc.page_count)
         pages = []
         for i, page in enumerate(doc):
-            pix = page.get_pixmap(dpi=300)
-            img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
-            pages.append(f"--- Page {i + 1} ---\n{ocr_image_array(np.array(img))}")
+            try:
+                pix = page.get_pixmap(dpi=300)
+                img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+                text = ocr_image_array(np.array(img))
+                log.info("PDF '%s' page %d/%d OCR'd → %d chars",
+                         filename, i + 1, doc.page_count, len(text))
+                pages.append(f"--- Page {i + 1} ---\n{text}")
+            except Exception:
+                log.exception("PDF '%s' page %d FAILED during OCR", filename, i + 1)
+                pages.append(f"--- Page {i + 1} ---\n[OCR failed for this page]")
         return "\n\n".join(pages)
 
     if ext in {".png", ".jpg", ".jpeg"}:
@@ -175,10 +196,20 @@ async def extract_text(file_bytes: bytes, filename: str) -> str:
     """Async wrapper with MD5 cache — same file never re-OCR'd."""
     key = _md5(file_bytes)
     if key in _ocr_cache:
-        print(f"Cache hit for {filename}")
+        log.info("Cache HIT for '%s' (md5=%s)", filename, key[:8])
         return _ocr_cache[key]
 
-    result = await asyncio.to_thread(_extract_text_sync, file_bytes, filename)
+    log.info("Cache MISS for '%s' (md5=%s) — running OCR", filename, key[:8])
+    started = time.perf_counter()
+    try:
+        result = await asyncio.to_thread(_extract_text_sync, file_bytes, filename)
+    except Exception:
+        log.exception("OCR FAILED for '%s'", filename)
+        raise
+    elapsed = time.perf_counter() - started
+    log.info("OCR done: '%s' → %d chars in %.2fs", filename, len(result), elapsed)
+    if not result.strip():
+        log.warning("OCR for '%s' produced EMPTY text — possible blank/unreadable document", filename)
     _ocr_cache[key] = result
     return result
 
@@ -201,7 +232,9 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.post("/upload", summary="Upload & OCR a document")
 async def upload_file(file: UploadFile = File(...)):
+    log.info("POST /upload received: '%s'", file.filename)
     if not is_allowed_file(file.filename):
+        log.warning("Rejected '%s' — file type not allowed", file.filename)
         raise HTTPException(
             status_code=400,
             detail=f"File type not allowed. Accepted: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
@@ -209,13 +242,21 @@ async def upload_file(file: UploadFile = File(...)):
 
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE_MB * 1024 * 1024:
+        log.warning("Rejected '%s' — %d bytes exceeds %d MB limit",
+                    file.filename, len(contents), MAX_FILE_SIZE_MB)
         raise HTTPException(status_code=400, detail=f"File exceeds {MAX_FILE_SIZE_MB} MB limit")
 
     (UPLOAD_DIR / file.filename).write_bytes(contents)
 
-    # Non-blocking: OCR runs in a thread pool, event loop stays free
-    extracted_text = await extract_text(contents, file.filename)
+    try:
+        # Non-blocking: OCR runs in a thread pool, event loop stays free
+        extracted_text = await extract_text(contents, file.filename)
+    except Exception as e:
+        log.exception("POST /upload FAILED for '%s'", file.filename)
+        raise HTTPException(status_code=500, detail=f"OCR failed: {e}")
+
     ocr_path = save_ocr_result(file.filename, extracted_text)
+    log.info("POST /upload OK: '%s' → saved %s", file.filename, ocr_path)
 
     return JSONResponse(status_code=200, content={
         "filename": file.filename,
@@ -351,21 +392,31 @@ def extract_single_field(lines: list[str], field: str) -> dict:
 
 @app.post("/extract", summary="Extract specific fields from OCR text with confidence scores")
 async def extract_fields(req: ExtractRequest):
+    log.info("POST /extract: %d field(s) over %d chars — fields=%s",
+             len(req.fields), len(req.text), req.fields)
     if not req.text.strip():
+        log.warning("POST /extract rejected — empty text")
         raise HTTPException(status_code=400, detail="text cannot be empty")
     if not req.fields:
+        log.warning("POST /extract rejected — empty fields list")
         raise HTTPException(status_code=400, detail="fields list cannot be empty")
 
     lines = [line.strip() for line in req.text.splitlines()]
 
     # All fields extracted concurrently in thread pool
-    results = await asyncio.gather(
-        *[asyncio.to_thread(extract_single_field, lines, f) for f in req.fields]
-    )
+    try:
+        results = await asyncio.gather(
+            *[asyncio.to_thread(extract_single_field, lines, f) for f in req.fields]
+        )
+    except Exception as e:
+        log.exception("POST /extract FAILED")
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
     results = list(results)
 
     found = sum(1 for r in results if r["value"] != "Not detected")
     overall = round(sum(r["confidence"] for r in results) / len(results), 1) if results else 0
+    log.info("POST /extract OK: %d/%d fields found, overall accuracy %.1f%%",
+             found, len(results), overall)
 
     return {
         "extractions": results,

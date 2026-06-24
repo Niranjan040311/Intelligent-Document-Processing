@@ -1597,6 +1597,35 @@
 
 <script>
   const API = '';
+
+  /* ── Diagnostic logging ───────────────────────────────────────────────
+     Tagged console logs so the pipeline can be traced step-by-step in the
+     browser devtools console (F12). Toggle with `DEBUG = false` to silence.
+     Use DocScanLog.dump() in the console to print the full captured trail. */
+  const DEBUG = true;
+  const _logTrail = [];
+  function dlog(scope, msg, data) {
+    const entry = { t: new Date().toISOString(), scope, msg, data };
+    _logTrail.push(entry);
+    if (_logTrail.length > 500) _logTrail.shift();
+    if (!DEBUG) return;
+    const tag = `%c[DocScan:${scope}]`;
+    const style = 'color:#e0a200;font-weight:600';
+    if (data !== undefined) console.log(tag, style, msg, data);
+    else console.log(tag, style, msg);
+  }
+  function derr(scope, msg, err) {
+    _logTrail.push({ t: new Date().toISOString(), scope, msg, error: err && (err.stack || err.message || String(err)) });
+    console.error(`[DocScan:${scope}] ${msg}`, err);
+  }
+  window.DocScanLog = { dump: () => console.table(_logTrail), trail: () => _logTrail };
+
+  // Catch anything that escapes the per-stage try/catch blocks.
+  window.addEventListener('error', e =>
+    derr('global', `Uncaught error: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`, e.error));
+  window.addEventListener('unhandledrejection', e =>
+    derr('global', 'Unhandled promise rejection', e.reason));
+
   let ocrText = '';
   let currentFile = '';
   let currentTab = 'extracted';
@@ -1725,7 +1754,10 @@
     document.getElementById('chipText').textContent = text;
   }
 
-  function setStage(n) {
+  // setStage(n)            → step n is active (in-progress), earlier steps done.
+  // setStage(n, true)      → steps 1..n all done (used when the final RESULT
+  //                          stage is fully complete, incl. data extraction).
+  function setStage(n, complete) {
     const pl = document.getElementById('pipeline');
     if (n === 0) { pl.style.display = 'none'; return; }
     pl.style.display = 'flex';
@@ -1735,7 +1767,7 @@
       if (!step) continue;
       step.classList.remove('active', 'done');
       if (conn) conn.classList.remove('done', 'flowing');
-      if (i < n) {
+      if (i < n || (complete && i <= n)) {
         step.classList.add('done');
         if (conn) conn.classList.add('done');
       } else if (i === n) {
@@ -1891,7 +1923,10 @@
   /* ── Batch driver: process every selected document one by one ──────── */
   async function handleFiles(fileList) {
     const files = Array.from(fileList || []).filter(Boolean);
-    if (!files.length) return;
+    if (!files.length) { dlog('batch', 'handleFiles called with no files'); return; }
+
+    dlog('batch', `Starting batch of ${files.length} document(s)`,
+      files.map(f => ({ name: f.name, size: f.size, type: f.type })));
 
     docs = files.map(f => ({
       file: f, name: f.name, size: f.size,
@@ -1904,15 +1939,22 @@
     if (files.length > 1) toast(`Processing ${files.length} documents one by one…`);
 
     // Sequential — pull the next queued doc by status so removals mid-batch are safe.
-    let next;
+    let next, index = 0;
     while ((next = docs.find(d => d.status === 'queued'))) {
+      const pos = docs.indexOf(next) + 1;
+      dlog('batch', `→ Processing document ${pos}/${docs.length}: "${next.name}"`);
       await processDoc(next);
+      dlog('batch', `← Finished document ${pos}/${docs.length}: "${next.name}" → status=${next.status}`);
+      index++;
     }
+
+    const summary = docs.reduce((a, d) => (a[d.status] = (a[d.status] || 0) + 1, a), {});
+    dlog('batch', 'Batch complete', summary);
 
     // If the active document failed (or was removed), land on the first successful one.
     if (!activeDoc || activeDoc.status !== 'done') {
       const firstDone = docs.find(d => d.status === 'done');
-      if (firstDone) viewDoc(firstDone);
+      if (firstDone) { dlog('batch', `Active doc not done — falling back to "${firstDone.name}"`); viewDoc(firstDone); }
     }
     renderQueue();
   }
@@ -1953,25 +1995,31 @@
 
     d.status = 'processing';
     setDocStage(d, 1, 10, 'Uploading…', 'Uploading');
+    dlog('doc', `[UPLOAD] "${d.name}" (${fmt(d.size)})`);
 
     const form = new FormData();
     form.append('file', d.file);
 
     try {
       // Simulate preprocessing stage while the request is in-flight.
+      dlog('doc', `[FETCH] POST ${API}/upload — "${d.name}"`);
       const fetchPromise = fetch(`${API}/upload`, { method: 'POST', body: form });
       await new Promise(r => setTimeout(r, 600));
       setDocStage(d, 2, 30, 'Preprocessing…', 'Preprocessing');
+      dlog('doc', `[PREPROCESS] "${d.name}"`);
 
       await new Promise(r => setTimeout(r, 900));
       setDocStage(d, 3, 55, 'Running OCR…', 'OCR Running');
+      dlog('doc', `[OCR] awaiting server response — "${d.name}"`);
 
       const res = await fetchPromise;
       setProgress(85, 'Finishing up…');
+      dlog('doc', `[RESPONSE] "${d.name}" → HTTP ${res.status} ${res.statusText} (ok=${res.ok})`);
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Upload failed' }));
-        throw new Error(err.detail || 'Upload failed');
+        derr('doc', `[RESPONSE] "${d.name}" failed with HTTP ${res.status}`, err);
+        throw new Error(err.detail || `Upload failed (HTTP ${res.status})`);
       }
 
       const data = await res.json();
@@ -1980,17 +2028,26 @@
       d.chars = d.ocrText.length;
       d.pages = (d.ocrText.match(/--- Page \d+ ---/g) || []).length || 1;
       d.status = 'done';
+      dlog('doc', `[OCR DONE] "${d.name}"`,
+        { words: d.words, chars: d.chars, pages: d.pages, textPreview: d.ocrText.slice(0, 80) });
 
-      setDocStage(d, 4, 100, 'OCR complete', 'OCR Done', 'done');
+      if (!d.ocrText) dlog('doc', `[WARN] "${d.name}" returned empty extracted_text — check OCR/backend`);
+
+      // Enter the RESULT stage. If fields are configured, data extraction runs
+      // next inside showDocResult() — show it as in-progress, then mark it done.
+      setDocStage(d, 4, 90, 'Building result…', 'Result', 'processing');
       dz.classList.remove('scanning');
 
+      dlog('doc', `[RESULT] entering result stage — "${d.name}"`);
       await showDocResult(d);
+      dlog('doc', `[COMPLETE] "${d.name}" fully processed`);
       toast(`${d.name} — OCR complete`, 'ok');
 
     } catch (err) {
       d.status = 'error';
       d.error = err.message;
       d.stage = d.stage || 1;
+      derr('doc', `[ERROR] "${d.name}" failed at stage ${d.stage} (${stageWord(d.stage)})`, err);
       dz.classList.remove('scanning');
       setStage(0);
       setProgress(0, 'Failed');
@@ -2002,6 +2059,7 @@
 
   // Load a processed document's OCR text, stats and extraction into the panel.
   async function showDocResult(d) {
+    dlog('result', `showDocResult("${d.name}") — fields configured: ${userFields.length}`, userFields.slice());
     hideStatus();
     activeDoc = d;
     ocrText = d.ocrText;
@@ -2021,10 +2079,29 @@
     renderQueue();
 
     if (userFields.length > 0) {
+      // RESULT stage = data extraction. Reflect it live in the pipeline.
+      setStage(4);
+      setProgress(95, 'Extracting data…');
+      setChip('processing', 'Extracting');
+      if (statusDoc === d) showStatus(d);
       switchTab('extracted');
+      dlog('result', `[EXTRACT] running field extraction for "${d.name}"`);
       await runExtraction();
+      dlog('result', `[EXTRACT DONE] "${d.name}"`);
     } else {
+      dlog('result', `[EXTRACT] skipped for "${d.name}" — no fields configured`);
       switchTab('raw');
+    }
+
+    // OCR + any field extraction finished — light up RESULT as complete.
+    // Guard against the user navigating to another doc mid-extraction.
+    if (activeDoc === d) {
+      setStage(4, true);
+      setProgress(100, userFields.length ? 'Extraction complete' : 'OCR complete');
+      setChip('done', userFields.length ? 'Done' : 'OCR Done');
+      dlog('result', `[RESULT DONE] "${d.name}" — pipeline marked complete`);
+    } else {
+      dlog('result', `[RESULT SKIP] "${d.name}" no longer active (user navigated away) — not finalizing UI`);
     }
   }
 
@@ -2035,7 +2112,7 @@
     document.getElementById('noFileHint').style.display = 'none';
     document.getElementById('fName').textContent = d.name;
     document.getElementById('fSize').textContent = fmt(d.size);
-    setStage(4);
+    setStage(4, true);
     setProgress(100, 'OCR complete');
     setChip('done', 'OCR Done');
     showDocResult(d);
@@ -2089,14 +2166,17 @@
 
   /* ── Field extraction ─────────────────────────────────────────────── */
   async function runExtraction() {
-    if (!ocrText) { toast('Upload a document first', 'err'); return; }
-    if (!userFields.length) { toast('Add at least one field to extract', 'err'); return; }
+    if (!ocrText) { dlog('extract', 'aborted — no OCR text available'); toast('Upload a document first', 'err'); return; }
+    if (!userFields.length) { dlog('extract', 'aborted — no fields configured'); toast('Add at least one field to extract', 'err'); return; }
 
     document.getElementById('extractBtn').disabled = true;
     document.getElementById('extractBtn').textContent = 'Extracting…';
     document.getElementById('emptyExtracted').style.display = 'none';
     document.getElementById('extractionResults').style.display = 'none';
     switchTab('extracted');
+
+    dlog('extract', `[FETCH] POST ${API}/extract — "${currentFile}"`,
+      { fields: userFields.slice(), textChars: ocrText.length });
 
     try {
       const res = await fetch(`${API}/extract`, {
@@ -2105,16 +2185,21 @@
         body: JSON.stringify({ text: ocrText, fields: userFields }),
       });
 
+      dlog('extract', `[RESPONSE] "${currentFile}" → HTTP ${res.status} ${res.statusText} (ok=${res.ok})`);
+
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Extraction failed' }));
-        throw new Error(err.detail || 'Extraction failed');
+        derr('extract', `[RESPONSE] "${currentFile}" failed with HTTP ${res.status}`, err);
+        throw new Error(err.detail || `Extraction failed (HTTP ${res.status})`);
       }
 
       const data = await res.json();
+      dlog('extract', `[OK] "${currentFile}" — ${data.fields_found}/${data.fields_total} fields, accuracy ${data.overall_accuracy}%`, data);
       renderExtractionResults(data);
       toast(`${data.fields_found} of ${data.fields_total} fields found`, 'ok');
 
     } catch (err) {
+      derr('extract', `[ERROR] extraction failed for "${currentFile}"`, err);
       document.getElementById('emptyExtracted').style.display = 'flex';
       toast(err.message, 'err');
     } finally {
