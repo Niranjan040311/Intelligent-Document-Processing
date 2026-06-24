@@ -1979,11 +1979,16 @@
 
   // Drive the main file card + queue item through one shared stage transition.
   function setDocStage(d, stage, pct, label, chipText, chipState) {
+    // Always record the doc's own progress so the queue item is correct…
     d.stage = stage;
     d.pct = pct;
-    setStage(stage);
-    setProgress(pct, label);
-    setChip(chipState || 'processing', chipText);
+    // …but only paint the single shared right-hand panel if THIS doc owns it.
+    // Otherwise a slower doc's late update would clobber the active doc's panel.
+    if (activeDoc === d) {
+      setStage(stage);
+      setProgress(pct, label);
+      setChip(chipState || 'processing', chipText);
+    }
     renderQueue();
     // Live-update the status view if the user is watching this document.
     if (statusDoc === d) showStatus(d);
@@ -2018,10 +2023,15 @@
     const form = new FormData();
     form.append('file', d.file);
 
+    // Abort the request if the server never responds (e.g. it restarted
+    // mid-upload under --reload), so the doc can't freeze at "OCR" forever.
+    const ctrl = new AbortController();
+    const timeoutId = setTimeout(() => ctrl.abort(), 120000); // 2 min ceiling
+
     try {
       // Simulate preprocessing stage while the request is in-flight.
       dlog('doc', `[FETCH] POST ${API}/upload — "${d.name}"`);
-      const fetchPromise = fetch(`${API}/upload`, { method: 'POST', body: form });
+      const fetchPromise = fetch(`${API}/upload`, { method: 'POST', body: form, signal: ctrl.signal });
       await new Promise(r => setTimeout(r, 600));
       setDocStage(d, 2, 30, 'Preprocessing…', 'Preprocessing');
       dlog('doc', `[PREPROCESS] "${d.name}"`);
@@ -2031,7 +2041,8 @@
       dlog('doc', `[OCR] awaiting server response — "${d.name}"`);
 
       const res = await fetchPromise;
-      setProgress(85, 'Finishing up…');
+      clearTimeout(timeoutId);
+      if (activeDoc === d) setProgress(85, 'Finishing up…');
       dlog('doc', `[RESPONSE] "${d.name}" → HTTP ${res.status} ${res.statusText} (ok=${res.ok})`);
 
       if (!res.ok) {
@@ -2062,16 +2073,24 @@
       toast(`${d.name} — OCR complete`, 'ok');
 
     } catch (err) {
+      clearTimeout(timeoutId);
       d.status = 'error';
-      d.error = err.message;
+      // A dropped/aborted request (server restart, timeout) gets a clear message
+      // instead of the browser's cryptic default.
+      d.error = err.name === 'AbortError'
+        ? 'Server did not respond (timed out or restarted). Try again.'
+        : err.message;
       d.stage = d.stage || 1;
       derr('doc', `[ERROR] "${d.name}" failed at stage ${d.stage} (${stageWord(d.stage)})`, err);
       dz.classList.remove('scanning');
-      setStage(0);
-      setProgress(0, 'Failed');
-      setChip('err', 'Error');
+      // Only repaint the shared panel if this doc still owns it.
+      if (activeDoc === d) {
+        setStage(0);
+        setProgress(0, 'Failed');
+        setChip('err', 'Error');
+      }
       renderQueue();
-      toast(`${d.name} — ${err.message}`, 'err');
+      toast(`${d.name} — ${d.error}`, 'err');
     }
   }
 

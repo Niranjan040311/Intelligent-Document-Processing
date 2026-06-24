@@ -467,7 +467,7 @@ async def extract_fields(req: ExtractRequest):
 
     lines = [line.strip() for line in req.text.splitlines()]
 
-    # All fields extracted concurrently in thread pool
+    # All fields extracted concurrently via keyword-proximity
     try:
         results = await asyncio.gather(
             *[asyncio.to_thread(extract_single_field, lines, f) for f in req.fields]

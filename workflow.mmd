@@ -21,11 +21,19 @@ flowchart TD
     P3 --> P4[CLAHE\nclipLimit=2.0]
     P4 --> P5[Unsharp Mask\naddWeighted 1.5 / -0.5]
 
-    P5 --> OCR[EasyOCR\nCNN-based text detection\ngpu=False conf > 0.3]
+    P5 --> OCR
+
+    subgraph OCRBOX [EasyOCR - two-stage deep learning, gpu=False]
+        OCR[Stage 1 Detection\nCRAFT - CNN\nFinds where text is\nbounding boxes] --> REC1[Stage 2 Recognition\nCRNN reads each region]
+        REC1 --> CNN[CNN - ResNet\nVisual features]
+        CNN --> RNN[RNN - BiLSTM\nCharacter sequence + context]
+        RNN --> CTC[CTC decoder\nFinal text + confidence]
+    end
+
     G --> POST
     H --> SAVE
 
-    OCR --> RAW[Raw text lines\nbounding-box + confidence]
+    CTC --> RAW[Keep regions conf > 0.3\nJoin into text lines]
     RAW --> POST[Post-Processing\nRegex corrections]
 
     POST --> FIX1[Fix currency symbol]
@@ -44,22 +52,33 @@ flowchart TD
 
     EXT --> SCAN[Scan each OCR line\nagainst each field name]
 
-    SCAN --> TIER1[Exact phrase match\nconf_base = 0.93]
-    SCAN --> TIER2[All field words match\nconf_base = 0.80]
-    SCAN --> TIER3[60 percent words match\nconf_base = 0.60 to 0.68]
+    SCAN --> TIER1[Exact label match\nconf_base = 0.98]
+    SCAN --> TIER2[Phrase in label / line\nconf_base = 0.95 / 0.90]
+    SCAN --> TIER3[All field words match\nconf_base = 0.80]
+    SCAN --> TIER4[60 percent words match\nconf_base = partial 0.40 to 0.68]
 
-    TIER1 & TIER2 & TIER3 --> VAL[Extract value\nfrom same line after colon\nor next non-empty line]
+    TIER1 & TIER2 & TIER3 & TIER4 --> VAL[Extract value\nfrom same line after colon\nor next non-empty line]
 
-    VAL --> CONF[Confidence adjustment\nSame line x1.0\nNext line x0.87]
+    VAL --> CONF[Confidence adjustment\nSame line x1.0\nNext line x0.87\nNumeric fields prefer last match]
 
-    CONF --> OUT[Results JSON\nextractions overall_accuracy\nfields_found fields_total]
+    CONF --> VALID{Validation\nFormat + Confidence}
+    VALID --> VOK[Valid\nformat ok and conf >= 60]
+    VALID --> VREV[Review\nformat ok but low confidence]
+    VALID --> VINV[Invalid\nwrong format for field]
+    VALID --> VMIS[Missing\nnot detected]
 
-    OUT --> UI[UI Extracted Fields tab\nValue + confidence bars\nGreen above 70 Amber 40 to 70 Red below 40]
+    VOK & VREV & VINV & VMIS --> OUT[Results JSON\nextractions overall_accuracy\nfields_found needs_review]
+
+    OUT --> UI[UI Extracted Fields tab\nValue + confidence bars + validation badge\nGreen Valid - Amber Review - Red Invalid]
 
     style A fill:#F0A500,color:#0D1117,stroke:none
     style ERR fill:#F85149,color:#ffffff,stroke:none
     style OCR fill:#F0A500,color:#0D1117,stroke:none
+    style CNN fill:#F0A500,color:#0D1117,stroke:none
+    style RNN fill:#F0A500,color:#0D1117,stroke:none
+    style CTC fill:#F0A500,color:#0D1117,stroke:none
     style UI fill:#3FB950,color:#0D1117,stroke:none
+    style VALID fill:#388BFD,color:#ffffff,stroke:none
     style PREP fill:#1C2333,color:#E6EDF3,stroke:#21262D
     style POST fill:#1C2333,color:#E6EDF3,stroke:#21262D
     style EXT fill:#1C2333,color:#E6EDF3,stroke:#21262D
