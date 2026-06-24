@@ -390,6 +390,70 @@ def extract_single_field(lines: list[str], field: str) -> dict:
     return {"field": field, "value": value, "confidence": round(min(conf * 100, 99.0), 1)}
 
 
+# ── Field validation ──────────────────────────────────────────────────────────
+# Sanity-check each extracted value so low-confidence or malformed data is
+# flagged for review instead of silently trusted.
+
+# Found, well-formed values below this confidence are flagged "review".
+REVIEW_CONFIDENCE = 60.0
+
+_DATE_RE = re.compile(
+    r'\b('
+    r'\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}'        # 12/05/2024, 12-05-24
+    r'|\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2}'          # 2024-05-12
+    r'|\d{1,2}\s+[A-Za-z]{3,9},?\s+\d{2,4}'      # 12 May 2024
+    r'|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4}'      # May 12, 2024
+    r')\b'
+)
+_EMAIL_RE = re.compile(r'[^@\s]+@[^@\s]+\.[^@\s]+')
+_NUMBER_RE = re.compile(r'\d')
+
+
+def _field_kind(field_lower: str) -> str:
+    """Guess the expected data type from the field name."""
+    if any(k in field_lower for k in ("email", "e-mail")) or field_lower.endswith("mail"):
+        return "email"
+    if any(k in field_lower for k in ("date", "dob", "dated", "expiry", "issued", "due on")):
+        return "date"
+    if any(k in field_lower for k in ("phone", "mobile", "contact", "tel", "cell")):
+        return "phone"
+    if _is_numeric_field(field_lower):
+        return "amount"
+    return "text"
+
+
+def validate_field(field: str, value: str, confidence: float) -> dict:
+    """Validate one extracted value. Returns {status, message}.
+
+    status ∈ {valid, review, invalid, missing}:
+      missing  — nothing was extracted
+      invalid  — value doesn't match the expected format for the field
+      review   — well-formed but low confidence; a human should confirm
+      valid    — found, well-formed, high confidence
+    """
+    if value in ("Not detected", "Error") or not value.strip():
+        return {"status": "missing", "message": "Not found in document"}
+
+    kind = _field_kind(field.lower())
+    v = value.strip()
+
+    if kind == "email" and not _EMAIL_RE.search(v):
+        return {"status": "invalid", "message": "Doesn't look like an email address"}
+    if kind == "date" and not _DATE_RE.search(v):
+        return {"status": "invalid", "message": "Doesn't look like a date"}
+    if kind == "phone":
+        digits = re.sub(r'\D', '', v)
+        if not 7 <= len(digits) <= 15:
+            return {"status": "invalid", "message": "Doesn't look like a phone number"}
+    if kind == "amount" and not _NUMBER_RE.search(v):
+        return {"status": "invalid", "message": "Expected a numeric value"}
+
+    if confidence < REVIEW_CONFIDENCE:
+        return {"status": "review", "message": f"Low confidence ({confidence:.0f}%) — please verify"}
+
+    return {"status": "valid", "message": "Looks valid"}
+
+
 @app.post("/extract", summary="Extract specific fields from OCR text with confidence scores")
 async def extract_fields(req: ExtractRequest):
     log.info("POST /extract: %d field(s) over %d chars — fields=%s",
@@ -413,16 +477,22 @@ async def extract_fields(req: ExtractRequest):
         raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
     results = list(results)
 
+    # Validate each value (format + confidence) and attach the verdict.
+    for r in results:
+        r["validation"] = validate_field(r["field"], r["value"], r["confidence"])
+
     found = sum(1 for r in results if r["value"] != "Not detected")
+    needs_review = sum(1 for r in results if r["validation"]["status"] in ("review", "invalid"))
     overall = round(sum(r["confidence"] for r in results) / len(results), 1) if results else 0
-    log.info("POST /extract OK: %d/%d fields found, overall accuracy %.1f%%",
-             found, len(results), overall)
+    log.info("POST /extract OK: %d/%d fields found, %d need review, overall accuracy %.1f%%",
+             found, len(results), needs_review, overall)
 
     return {
         "extractions": results,
         "overall_accuracy": overall,
         "fields_found": found,
         "fields_total": len(results),
+        "needs_review": needs_review,
     }
 
 

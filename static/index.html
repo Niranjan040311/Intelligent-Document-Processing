@@ -1027,6 +1027,24 @@
     margin-bottom: 5px;
   }
 
+  .xcard-head-right { display: flex; align-items: center; gap: 8px; }
+
+  /* Validation badge */
+  .xval {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .6px;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    line-height: 1.5;
+  }
+  .xval.valid   { background: var(--g10); border: 1px solid var(--g20);            color: var(--green); }
+  .xval.review  { background: var(--a10); border: 1px solid var(--a20);            color: var(--accent); }
+  .xval.invalid { background: var(--r10); border: 1px solid rgba(239,68,68,0.25);  color: var(--red); }
+  .xval.missing { background: rgba(255,255,255,0.04); border: 1px solid var(--b1); color: var(--t3); }
+
   .xcard-field {
     font-size: 9px;
     font-weight: 700;
@@ -2227,24 +2245,34 @@
     const total = data.fields_total;
     document.getElementById('fieldsFoundText').innerHTML =
       `${found} <span>/ ${total} fields</span>`;
-    document.getElementById('fieldsFoundSub').textContent = 'detected in document';
+    // Surface how many values need a human look (low confidence or bad format).
+    const review = data.needs_review || 0;
+    document.getElementById('fieldsFoundSub').textContent =
+      review > 0 ? `${review} need${review === 1 ? 's' : ''} review` : 'detected in document';
 
     const cards = document.getElementById('extractCards');
     cards.innerHTML = '';
 
     data.extractions.forEach((item, i) => {
       const notFound = item.value === 'Not detected' || item.value === 'Error';
-      const cls = notFound ? 'cl' : confClass(item.confidence);
+      // Validation verdict drives both the badge and the card's left-border colour.
+      const v = item.validation || { status: notFound ? 'missing' : 'valid', message: '' };
+      const cls = validationClass(v.status);
+      const badge = validationBadge(v.status);
 
       const card = document.createElement('div');
       card.className = `xcard ${cls}`;
       card.style.animationDelay = (i * 55) + 'ms';
 
       card.dataset.field = item.field;
+      const safeMsg = (v.message || '').replace(/"/g, '&quot;');
       card.innerHTML = `
         <div class="xcard-head">
           <div class="xcard-field">${item.field}</div>
-          <button class="xcard-remove" onclick="removeExtractedField('${item.field.replace(/'/g, "\\'")}')" title="Remove field" aria-label="Remove ${item.field}">×</button>
+          <div class="xcard-head-right">
+            <span class="xval ${v.status}" title="${safeMsg}">${badge}</span>
+            <button class="xcard-remove" onclick="removeExtractedField('${item.field.replace(/'/g, "\\'")}')" title="Remove field" aria-label="Remove ${item.field}">×</button>
+          </div>
         </div>
         <div class="xcard-value${notFound ? ' missing' : ''}">${item.value}</div>
         <div class="xbar-row">
@@ -2259,6 +2287,24 @@
 
     document.getElementById('extractionResults').style.display = 'flex';
     document.getElementById('emptyExtracted').style.display = 'none';
+
+    dlog('validate', `${found}/${total} found, ${review} need review`,
+      data.extractions.map(e => ({ field: e.field, status: (e.validation || {}).status, conf: e.confidence })));
+  }
+
+  // Map a validation status to the card's left-border colour class.
+  function validationClass(status) {
+    if (status === 'valid')   return 'ch';
+    if (status === 'review')  return 'cm';
+    return 'cl'; // invalid | missing
+  }
+
+  // Short label shown inside the validation badge.
+  function validationBadge(status) {
+    return status === 'valid'   ? '✓ Valid'
+         : status === 'review'  ? '⚠ Review'
+         : status === 'invalid' ? '✕ Invalid'
+         :                        '— Missing';
   }
 
   /* ── Remove extracted field ───────────────────────────────────────── */
@@ -2340,7 +2386,9 @@
       const field = c.querySelector('.xcard-field').textContent;
       const value = c.querySelector('.xcard-value').textContent;
       const conf  = c.querySelector('.xbar-pct').textContent;
-      return `${field}: ${value}  [Confidence: ${conf}]`;
+      const valEl = c.querySelector('.xval');
+      const status = valEl ? `, ${valEl.textContent.replace(/^[^A-Za-z]+/, '').trim()}` : '';
+      return `${field}: ${value}  [Confidence: ${conf}${status}]`;
     }).join('\n');
   }
 
