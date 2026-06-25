@@ -1,8 +1,8 @@
 # DocScan — Intelligent Document Processing (IDP)
 
-> Upload any document, define the fields you want, and get structured, validated data with confidence scores — fully offline. No cloud, no API keys, no cost.
+> Upload any document, define the fields you want, and get structured, validated data with confidence scores. **Offline-first** OCR + extraction, with an optional **GPT-4.1 AI fallback** that understands context when a simple label match isn't enough.
 
-DocScan is a locally-running **OCR + field extraction** web app. It turns scanned invoices, receipts, IDs and forms into clean, structured data — and now **validates** every extracted value so bad data gets flagged instead of silently trusted.
+DocScan is a locally-running **OCR + field extraction** web app. It turns scanned invoices, receipts, IDs and forms into clean, structured data — **validates** every extracted value so bad data gets flagged, and uses a **two-tier extraction engine** that self-corrects: fast offline matching first, then a GPT-4.1 fallback for anything the offline tier misses or gets wrong.
 
 ---
 
@@ -10,11 +10,11 @@ DocScan is a locally-running **OCR + field extraction** web app. It turns scanne
 
 | | |
 |---|---|
-| **What it is** | An offline Intelligent Document Processing (IDP) tool |
-| **What it does** | Extracts text from documents, pulls out user-defined fields, scores confidence, and validates results |
+| **What it is** | An Intelligent Document Processing (IDP) tool with a two-tier extraction engine |
+| **What it does** | Extracts text, pulls out user-defined fields, scores confidence, validates results, and recovers/corrects hard fields with GPT-4.1 |
 | **Who it's for** | Anyone processing invoices, receipts, ID cards, and structured forms |
-| **Key promise** | 100% offline — no cloud, no API keys, no per-page cost, full data privacy |
-| **Built with** | Python · FastAPI · EasyOCR · OpenCV · vanilla JS frontend |
+| **Key promise** | Offline-first (OCR + matching run locally); GPT-4.1 is an optional fallback only for the fields the offline tier can't handle |
+| **Built with** | Python · FastAPI · EasyOCR · OpenCV · Azure OpenAI (GPT-4.1) · vanilla JS frontend |
 
 ---
 
@@ -24,11 +24,14 @@ DocScan is a locally-running **OCR + field extraction** web app. It turns scanne
 - 🖼️ **Smart image preprocessing** — 5-step OpenCV pipeline for clean OCR input
 - 🔍 **Offline OCR** — EasyOCR (CRAFT detector + CNN+RNN recognizer), runs on CPU, no internet needed
 - 🧹 **Auto-correction** — regex fixes for common OCR misreads (₹, 0/O, 1/l, emails)
-- 🎯 **Custom field extraction** — define any fields; keyword-proximity search finds them
-- 📊 **Confidence scoring** — every value gets a 0–99% reliability score
+- 🎯 **Two-tier field extraction** — fast offline keyword-proximity first, **GPT-4.1 AI fallback** second
+- 🧠 **Context-aware AI recovery** — GPT-4.1 finds values with no label ("Mr. Ravi is the patient" → name = "Mr. Ravi")
+- 🔁 **Self-correcting** — a low-confidence or suspicious offline match is re-checked by GPT-4.1, which **overrides** it if wrong
+- 📊 **Confidence scoring** — every value gets a 0–99% score, with a **before → after** transition when AI corrects it
 - ✅ **Validation layer** — format + confidence checks flag values as Valid / Review / Invalid / Missing
+- 🔬 **Live two-tier flow** — the UI shows "Label matching → GPT-4.1 fallback" happening in real time, with `by label` / `by AI` tags per field
 - 📦 **Batch processing** — upload many documents, processed one-by-one with a live status pipeline
-- ⚡ **MD5 caching** — the same file is never OCR'd twice
+- ⚡ **MD5 caching + per-doc result cache** — same file never re-OCR'd; revisiting a done doc is instant
 - 🪵 **Full diagnostic logging** — frontend console + backend logs to trace any error
 
 ---
@@ -45,6 +48,8 @@ DocScan is a locally-running **OCR + field extraction** web app. It turns scanne
 | **Image I/O** | Pillow (PIL) | Image loading & format conversion |
 | **Numerics** | NumPy | Image array operations |
 | **Office Files** | python-docx, openpyxl | Read Word & Excel files (no OCR needed) |
+| **AI Fallback** | Azure OpenAI — GPT-4.1 | Context-aware extraction for fields the offline tier misses or gets wrong |
+| **Config** | python-dotenv | Loads API keys from a git-ignored `.env` (never hardcoded) |
 | **Frontend** | HTML + CSS + Vanilla JS | Single-page UI, no framework |
 | **Validation** | Python regex | Format checks for dates, emails, phones, amounts |
 
@@ -53,24 +58,26 @@ DocScan is a locally-running **OCR + field extraction** web app. It turns scanne
 ## 4. System Architecture
 
 ```
-┌─────────────┐     HTTP/JSON      ┌──────────────────────────────┐
-│   Browser   │  ───────────────▶  │        FastAPI Backend        │
-│  (index.html)│                    │                               │
-│             │                    │  /upload   → OCR pipeline      │
-│  - Upload   │  ◀───────────────  │  /extract  → field + validate  │
-│  - Pipeline │                    │  /files    → list documents    │
-│  - Results  │                    │  /health   → status check      │
-│  - Badges   │                    └──────────────────────────────┘
-└─────────────┘                                  │
-                                                 ▼
-                          ┌──────────────────────────────────────┐
-                          │  OCR Pipeline (per document)           │
-                          │  Preprocess → EasyOCR → Post-process   │
-                          └──────────────────────────────────────┘
-                                                 │
-                                  uploads/   ◀───┴───▶   ocr_results/
-                               (raw files)            (extracted text)
+┌─────────────┐     HTTP/JSON      ┌──────────────────────────────────┐
+│   Browser   │  ───────────────▶  │          FastAPI Backend          │
+│ (index.html)│                    │                                   │
+│  - Upload   │                    │  /upload      → OCR pipeline       │
+│  - Pipeline │  ◀───────────────  │  /extract     → Tier 1: keyword    │
+│  - 2-tier   │                    │  /extract/llm → Tier 2: GPT-4.1    │
+│    flow UI  │                    │  /files · /health                  │
+│  - Badges   │                    └──────────────────────────────────┘
+└─────────────┘                            │                  │
+                                           ▼                  ▼
+                  ┌────────────────────────────────┐   ┌──────────────────────┐
+                  │  OCR Pipeline (per document)     │   │  GPT-4.1 (Azure)      │
+                  │  Preprocess → EasyOCR → Post-fix │   │  only for missing /   │
+                  └────────────────────────────────┘   │  suspicious fields    │
+                                  │                      └──────────────────────┘
+                   uploads/   ◀───┴───▶   ocr_results/        (optional fallback)
+                (raw files)            (extracted text)
 ```
+
+**Offline-first by design:** OCR and Tier-1 keyword matching run entirely locally. The GPT-4.1 call (`/extract/llm`) fires **only** for fields the offline tier couldn't find or matched with low confidence — minimizing what leaves the machine. With no API key configured, DocScan runs fully offline (Tier 1 only).
 
 ---
 
@@ -259,20 +266,46 @@ Common, predictable OCR mistakes are auto-corrected:
 
 ---
 
-## 6. Field Extraction (Keyword-Proximity Algorithm)
+## 6. Two-Tier Field Extraction Engine ⭐
 
-Instead of a heavy LLM, DocScan uses a fast, offline keyword-proximity search — instant, no model download, accurate on structured documents.
+DocScan extracts fields in **two tiers**. The fast, free, offline tier handles the easy cases; the AI tier handles only what the first tier can't — so you get the best of both: **speed + privacy by default, intelligence when needed.**
 
-**How it works:**
+```
+                 USER FIELDS  e.g. [Customer Name, GST No, Address]
+                              │
+                              ▼
+        ┌──────────────────────────────────────────────────────┐
+        │  TIER 1 — Keyword-Proximity  (offline · instant · free) │
+        │  scans OCR lines for the field label, grabs the value   │
+        └──────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┴────────────────┐
+        found, high confidence            missing  OR  low-confidence / suspicious
+              │                                 │
+              ▼                                 ▼
+         keep it (tag: by label)    ┌──────────────────────────────────────────┐
+                                    │  TIER 2 — GPT-4.1 fallback (Azure OpenAI)  │
+                                    │  understands meaning & context, no label   │
+                                    │  needed — its answer OVERRIDES a wrong grab │
+                                    └──────────────────────────────────────────┘
+                                                  │
+                                                  ▼
+                                       recovered/corrected (tag: by AI)
+                              │
+                              ▼
+                   VALIDATION  →  Valid / Review / Invalid / Missing  →  UI cards
+```
+
+### Tier 1 — Keyword-Proximity (offline, instant, free)
+
+For structured documents (invoices, forms) where fields have labels:
 1. For each field name, scan every OCR line
 2. Match the field as **whole words only** (so "ID" won't match inside "paid")
 3. Pull the value from after `:` or `=` on the same line
 4. If no value on that line, use the next non-empty line
 5. Pick the best candidate by confidence
 
-**Smart rule for totals:** numeric fields (total, amount, tax, GST, price…) prefer the **last** strong match — because grand totals sit at the *bottom* of invoices, not the top.
-
-### Confidence Scoring
+**Smart rule for totals:** numeric fields (total, amount, tax, GST, price…) prefer the **last** strong match — grand totals sit at the *bottom* of invoices.
 
 | Match type | Base confidence |
 |---|---|
@@ -284,7 +317,42 @@ Instead of a heavy LLM, DocScan uses a fast, offline keyword-proximity search �
 | Value on next line (not same line) | ×0.87 penalty |
 | Not found | 0% → "Not detected" |
 
-*(Confidence is capped at 99%.)*
+### Tier 2 — GPT-4.1 AI Fallback (context-aware)
+
+Keyword matching fails on two kinds of fields, and GPT-4.1 fixes both:
+
+| Problem Tier 1 has | Example | GPT-4.1 result |
+|---|---|---|
+| **No label present** — value is buried in prose | *"Mr. Ravi is the patient"* → field **Name** | finds **"Ravi"** with no label |
+| **Confident but WRONG** — matched the wrong text | field **Name** grabs a table header → returns **"Primary?"** | **overrides** with the real name **"Rodney James Foster"** |
+
+**When Tier 2 runs** (only when needed, to minimize cost & data exposure):
+- the field was **Not detected** by Tier 1, **OR**
+- the Tier-1 match is **below 90% confidence**, **OR**
+- the Tier-1 value **failed validation** (wrong format)
+
+**How it works:**
+- All such fields are sent in **one** request to GPT-4.1 (`/extract/llm`) with a carefully engineered system prompt
+- The prompt enforces: extract the value only (no labels), correct obvious OCR errors, **never hallucinate** ("a wrong value is worse than Not detected"), and return calibrated 0–100 confidence
+- Returns strict JSON `{field: {value, confidence}}`; if GPT-4.1 finds a real value it **replaces** the Tier-1 result
+
+**The self-correcting moment (great demo):** when Tier-1 grabs `"Primary?"` for a Name field at 85%, that's below the 90% threshold → GPT-4.1 re-checks → returns `"Rodney James Foster"` at 99%. The card shows the confidence transition **85% → 99%** and a green **AI** badge.
+
+### Confidence scoring
+
+Tier-1 confidence is rule-based (table above). Tier-2 confidence is GPT-4.1's own self-reported score. **Both are capped at 99%** (no extraction is ever truly 100% certain). *Note: LLM self-reported confidence is an estimate, not a measured accuracy.*
+
+### Privacy & cost model
+
+| | Tier 1 (keyword) | Tier 2 (GPT-4.1) |
+|---|---|---|
+| Where it runs | Locally | Azure OpenAI |
+| Data leaves machine? | Never | Only the fields it can't solve |
+| Cost | Free | Per-token (only on fallback) |
+| Needs internet? | No | Yes |
+| If no API key set | ✅ runs | gracefully skipped — app stays fully offline |
+
+> **Why Azure OpenAI (not OpenAI direct):** Azure keeps data inside the organisation's own tenant and does not train on it — the right choice for internal-confidential documents.
 
 ---
 
@@ -324,11 +392,16 @@ After extraction, **every value is validated** so wrong data is caught — even 
 ## 8. User Interface Highlights
 
 - **Drag-and-drop upload** with a live 4-step pipeline (Uploaded → Preprocess → OCR → Result)
-- **Batch queue** — multiple documents shown with per-document status
+- **Batch queue** — multiple documents shown with per-document status; **↻ retry** on any failed doc (no re-upload)
+- **Live two-tier flow strip** — watch *"Label matching → GPT-4.1 fallback"* happen in real time, with a spinning/✓ state per tier
+- **Method breakdown pills** — *"3 by label · 2 by AI"* shows which engine found each field
+- **Per-field source tag** — a green **AI** badge marks values recovered/corrected by GPT-4.1
+- **Confidence transition** — when AI overrides a wrong match, the bar animates *85% → 99%* (old struck-through)
 - **Stats panel** — word count, character count, page count
 - **Raw Text tab** — full OCR output, page by page
 - **Extracted tab** — field cards with confidence bars + validation badges
 - **Accuracy ring** — overall confidence at a glance, plus "N need review"
+- **Instant revisit** — a finished document's result is cached, so switching back to it shows immediately (no re-extraction)
 - **Copy / Download** — export results (value + confidence + validation status)
 
 ---
@@ -340,16 +413,24 @@ After extraction, **every value is validated** so wrong data is caught — even 
 | `GET` | `/` | Serves the web UI |
 | `POST` | `/upload` | Upload & OCR a single document |
 | `POST` | `/upload/multiple` | Upload & OCR several documents at once |
-| `POST` | `/extract` | Extract & validate fields from OCR text |
+| `POST` | `/extract` | **Tier 1** — keyword extraction + validation; returns which fields need a Tier-2 recheck |
+| `POST` | `/extract/llm` | **Tier 2** — GPT-4.1 fallback for the missing/suspicious fields |
 | `GET` | `/files` | List uploaded files and their OCR results |
-| `GET` | `/health` | Service status + OCR readiness + cache size |
+| `GET` | `/health` | Service status + OCR readiness + cache size + **whether GPT-4.1 fallback is enabled** |
+
+> Splitting extraction into two endpoints is what lets the UI **show the two tiers happening live** — Tier 1 returns instantly, then the browser calls Tier 2 only for the fields that need it.
 
 ---
 
 ## 10. Performance & Reliability
 
 - **MD5 caching** — identical files return instantly, never re-OCR'd
+- **Per-document result cache** — revisiting a finished document shows its result instantly (no re-extraction)
+- **Thread-safe OCR** — a lock serialises EasyOCR so concurrent requests can't crash the shared reader
 - **Non-blocking OCR** — CPU-heavy work runs in a thread pool, server stays responsive
+- **Request timeouts** — 5-min ceiling on OCR, 45-sec on the GPT-4.1 call, so a stalled request fails cleanly instead of hanging
+- **Retry on failure** — any failed document can be retried from the queue without re-uploading
+- **Graceful AI degradation** — if GPT-4.1 is unreachable/timed-out, those fields stay "Not detected"; the app never crashes and the offline result still shows
 - **Startup model load** — EasyOCR loads once at boot (English, CPU mode)
 - **Diagnostic logging** —
   - *Frontend:* tagged console logs (`[DocScan:doc]`, `[DocScan:extract]`…) + `DocScanLog.dump()`
@@ -364,12 +445,26 @@ After extraction, **every value is validated** so wrong data is caught — even 
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Start the server
-uvicorn main:app --reload
+# 2. (Optional) Enable the GPT-4.1 fallback — copy .env.example to .env and fill in
+#    your Azure OpenAI keys. Skip this and the app runs fully offline (Tier 1 only).
+#    .env is git-ignored — never commit your keys.
 
-# 3. Open in browser
+# 3. Start the server
+python -m uvicorn main:app
+
+# 4. Open in browser
 http://localhost:8000
 ```
+
+**`.env` (optional — for the GPT-4.1 fallback):**
+```
+AZURE_OPENAI_ENDPOINT=https://YOUR-RESOURCE.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-key
+AZURE_OPENAI_DEPLOYMENT=gpt-4.1
+AZURE_OPENAI_API_VERSION=2024-10-21
+```
+
+> **Tip:** run with plain `python -m uvicorn main:app` (no `--reload`) — `--reload` watches the whole folder and can restart the server mid-OCR (especially in synced folders like OneDrive), interrupting long documents. Without reload, OCR always completes cleanly. Check `GET /health` → `"llm_fallback_enabled": true` to confirm GPT-4.1 is active.
 
 ---
 
@@ -377,12 +472,14 @@ http://localhost:8000
 
 ```
 IDP-Preparation/
-├── main.py            # FastAPI backend — OCR, extraction & validation logic
+├── main.py            # FastAPI backend — OCR, two-tier extraction, GPT-4.1 fallback, validation
 ├── requirements.txt   # Python dependencies
+├── .env.example       # Template for Azure OpenAI keys (safe to commit)
+├── .env               # Your real keys — git-ignored, NEVER committed
 ├── README.md          # This file
 ├── workflow.mmd       # Mermaid flowchart of the pipeline
 ├── static/
-│   └── index.html     # Frontend UI (HTML + CSS + JS)
+│   └── index.html     # Frontend UI (HTML + CSS + JS, two-tier flow visuals)
 ├── uploads/           # Saved uploaded documents
 └── ocr_results/       # Saved OCR text output
 ```
@@ -394,9 +491,13 @@ IDP-Preparation/
 | Choice | Reason |
 |---|---|
 | **Offline OCR (EasyOCR)** | Privacy, zero cost, no API limits |
-| **Keyword extraction (not LLM)** | Instant, no model download, accurate on structured docs |
+| **Two-tier extraction** | Keyword first (fast/free/private), GPT-4.1 only when needed — best of both |
+| **GPT-4.1 as a *fallback*, not primary** | Most data never leaves the machine; AI cost is paid only on hard fields |
+| **Azure OpenAI (not OpenAI direct)** | Data stays in the org tenant, not used for training — fit for confidential docs |
+| **Keys in `.env`, never in code** | Credentials never committed to git |
+| **Two extract endpoints** | Lets the UI show the two tiers running live, and isolates the AI call |
 | **OpenCV preprocessing** | Turns poor scans into OCR-ready images |
-| **Validation layer** | Catches errors confidence alone would miss |
+| **Validation layer** | Catches errors confidence alone would miss; also triggers the AI recheck |
 | **Vanilla JS frontend** | Lightweight, no build step, easy to host |
 | **Single-file backend** | Easy to read, run, and present |
 
@@ -404,14 +505,17 @@ IDP-Preparation/
 
 ## 14. Future Enhancements
 
-- Dedicated **Validate** stage in the pipeline stepper
+- **Real streaming OCR progress** (Server-Sent Events) — replace simulated stages with true per-page progress
+- **Logprobs-based confidence** for the AI tier — mathematically-grounded scores instead of self-reported
+- **Table / line-item extraction** — pull repeating rows (invoice items), not just single fields
+- **Auto-suggest fields** — GPT-4.1 proposes the right fields based on document type
 - Cross-field rules (e.g. `subtotal + tax ≈ total`)
 - Multi-language OCR (EasyOCR supports 80+ languages)
 - Export to CSV / JSON / Excel
-- LLM-assisted extraction for unstructured documents
+- Persistence — results survive a page refresh (SQLite / localStorage)
 - User-saved field templates per document type
 
 ---
 
 ### One-line pitch
-**DocScan turns any scanned document into clean, validated, structured data — instantly and entirely offline.**
+**DocScan turns any scanned document into clean, validated, structured data — offline-first, with a self-correcting GPT-4.1 fallback that catches what simple matching can't.**
